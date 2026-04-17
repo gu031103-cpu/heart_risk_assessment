@@ -9,6 +9,7 @@
   最优模型给出风险概率、风险等级以及个体化 SHAP 归因解释。
 
   本管道严格复用训练时落盘的 .pkl 产物，杜绝训练-推理偏差。
+  已增加自动拼接切片文件的功能，以便于云端部署。
 =============================================================================
 """
 
@@ -70,13 +71,13 @@ FINAL_FEATURES: List[str] = [
     'DIFFALON', '_IMPRACE_6.0',
 ]
 
-# 决策阈值（来自模型训练.txt 的 LightGBM 最优阈值寻优结果）
+# 决策阈值（来自模型训练寻优结果）
 OPTIMAL_THRESHOLD: float = 0.4860
-# 高/低风险分位数（来自可解释性.txt 第 3 步的结果）
+# 高/低风险分位数（来自可解释性结果）
 HIGH_RISK_QUANTILE: float = 0.6487
 LOW_RISK_QUANTILE: float = 0.0712
 
-# 中文可读名（与可解释性.txt 同步）
+# 中文可读名
 FEATURE_DISPLAY_NAMES: Dict[str, str] = {
     'SEXVAR': '性别', '_BMI5CAT': 'BMI分类',
     '_INCOMG1': '收入等级', '_SMOKER3': '吸烟状态',
@@ -179,20 +180,13 @@ class HeartRiskPipeline:
         """
         参数
         ----
-        artifacts_dir : 存放 .pkl 产物的目录。需包含：
-            - mode_imputer.pkl
-            - iter_imputer.pkl              (可选，若训练时有高缺失列)
-            - clip_bounds.pkl
-            - train_enc_columns.pkl
-            - scaler.pkl
-            - missing_cols_lists.pkl
-            - model_LightGBM.pkl
+        artifacts_dir : 存放 .pkl 产物的目录。
         """
         self.artifacts_dir = artifacts_dir
         self._load_artifacts()
         self._build_explainer()
 
-    # ---------- 1. 加载落盘产物 ----------
+    # ---------- 1. 加载落盘产物 (含自动拼接逻辑) ----------
     def _load_artifacts(self) -> None:
         p = lambda name: os.path.join(self.artifacts_dir, name)
 
@@ -203,7 +197,7 @@ class HeartRiskPipeline:
             if not os.path.exists(p(f)):
                 raise FileNotFoundError(
                     f"缺少必备产物文件：{f}\n"
-                    f"请把训练阶段保存的 .pkl 文件全部放在 '{self.artifacts_dir}' 目录下。"
+                    f"请确保所有 .pkl 文件都在 '{self.artifacts_dir}' 目录下。"
                 )
 
         self.train_enc_columns: List[str] = joblib.load(p('train_enc_columns.pkl'))
@@ -215,8 +209,34 @@ class HeartRiskPipeline:
 
         self.mode_imputer = joblib.load(p('mode_imputer.pkl')) \
             if os.path.exists(p('mode_imputer.pkl')) else None
-        self.iter_imputer = joblib.load(p('iter_imputer.pkl')) \
-            if os.path.exists(p('iter_imputer.pkl')) else None
+
+        # ==== 核心修改：自动拼接 iter_imputer 切片逻辑 ====
+        iter_path = p('iter_imputer.pkl')
+        if os.path.exists(iter_path):
+            # 如果存在完整的 pkl 文件，直接加载
+            self.iter_imputer = joblib.load(iter_path)
+        else:
+            # 否则，寻找所有的 .part 切片文件
+            chunk_files = sorted([f for f in os.listdir(self.artifacts_dir) if f.startswith('iter_imputer.pkl.part')])
+            if chunk_files:
+                # 提示正在拼接文件 (在控制台输出，帮助调试)
+                print(f"正在从 {len(chunk_files)} 个切片中拼接 iter_imputer.pkl...")
+                model_bytes = bytearray()
+                for chunk_name in chunk_files:
+                    with open(p(chunk_name), 'rb') as f:
+                        model_bytes.extend(f.read())
+                
+                # 可选：如果你想把拼接好的文件保存下来以供下次使用，可以取消下面两行的注释
+                # with open(iter_path, 'wb') as f:
+                #     f.write(model_bytes)
+                
+                # 直接从内存中的字节流加载对象，无需再次写入硬盘，更适合云环境
+                import io
+                self.iter_imputer = joblib.load(io.BytesIO(model_bytes))
+                print("拼接完成并成功加载！")
+            else:
+                self.iter_imputer = None
+        # ===============================================
 
         self.model = joblib.load(p('model_LightGBM.pkl'))
 
@@ -236,19 +256,14 @@ class HeartRiskPipeline:
         """
         参数
         ----
-        answers : 形如 {'SEXVAR': 1, '_AGE_G': 5, ...} 的字典；
-                  键必须是 35 个原始字段名，值是对应的 BRFSS 编码。
-                  允许部分字段缺失（用 NaN），稍后由插补器处理。
+        answers : 形如 {'SEXVAR': 1, '_AGE_G': 5, ...} 的字典
         """
-        # 用 NaN 补齐缺失字段
         row = {col: answers.get(col, np.nan) for col in FEATURE_COLUMNS}
         df = pd.DataFrame([row], columns=FEATURE_COLUMNS)
 
-        # 强制转 numeric，把无效值打成 NaN
         for col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce')
 
-        # 清掉训练时定义的无效编码 (7, 9 等)
         for col, miss_vals in MISSING_CODES.items():
             if col in df.columns and miss_vals:
                 df[col] = df[col].replace({v: np.nan for v in miss_vals})
@@ -258,7 +273,7 @@ class HeartRiskPipeline:
     def _preprocess(self, df_raw: pd.DataFrame) -> pd.DataFrame:
         df = df_raw.copy()
 
-        # 4.1 低缺失列：众数插补（沿用训练拟合的 imputer）
+        # 4.1 低缺失列：众数插补
         if self.low_missing_cols and self.mode_imputer is not None:
             df.loc[:, self.low_missing_cols] = self.mode_imputer.transform(
                 df[self.low_missing_cols])
@@ -281,13 +296,13 @@ class HeartRiskPipeline:
         # 4.4 数值映射
         df = apply_feature_engineering_mappings(df)
 
-        # 4.5 独热编码
+        # 4.5 独热编码 (修复：强制转 float 以匹配训练时的 .0 列名后缀)
         nominal = [c for c in NOMINAL_COLS if c in df.columns]
         for col in nominal:
             df[col] = df[col].astype(float)
         df_enc = pd.get_dummies(df, columns=nominal, drop_first=False)
 
-        # 4.6 列对齐：补齐训练时见过但本样本没有的列，移除多余列
+        # 4.6 列对齐
         df_enc = df_enc.reindex(columns=self.train_enc_columns, fill_value=0)
         df_enc = df_enc.astype(float)
 
@@ -304,12 +319,12 @@ class HeartRiskPipeline:
     def _classify_risk(prob: float) -> Tuple[str, str]:
         """根据概率返回 (等级, 颜色)。"""
         if prob >= HIGH_RISK_QUANTILE:
-            return '高风险', '#d62728'         # 醒目红
+            return '高风险', '#d62728'
         if prob >= OPTIMAL_THRESHOLD:
-            return '中-高风险', '#ff7f0e'      # 橙
+            return '中-高风险', '#ff7f0e'
         if prob >= LOW_RISK_QUANTILE:
-            return '中风险', '#f1c40f'         # 黄
-        return '低风险', '#2ca02c'             # 绿
+            return '中风险', '#f1c40f'
+        return '低风险', '#2ca02c'
 
     # ---------- 6. 主入口 ----------
     def assess(self,
@@ -345,8 +360,7 @@ class HeartRiskPipeline:
     # ---------- 7. SHAP 解释 ----------
     def _explain_individual(self, X: pd.DataFrame, top_k: int) -> pd.DataFrame:
         """
-        返回 top-K 贡献因子表，列：
-            feature, display_name, scaled_value, shap_value, direction
+        返回 top-K 贡献因子表。
         """
         if self.explainer is None:
             # 退化方案：用模型自带 feature_importances_
@@ -363,12 +377,11 @@ class HeartRiskPipeline:
             return df.sort_values('shap_value', key=abs, ascending=False).head(top_k)
 
         sv_raw = self.explainer.shap_values(X)
-        # LightGBM 二分类下，shap_values 既可能是 list[2]，也可能直接是 ndarray
         if isinstance(sv_raw, list):
             sv = sv_raw[1] if len(sv_raw) == 2 else sv_raw[0]
         else:
             sv = sv_raw
-        sv = np.asarray(sv).reshape(-1)  # 单样本 → 一维
+        sv = np.asarray(sv).reshape(-1)
 
         df = pd.DataFrame({
             'feature': FINAL_FEATURES,
@@ -379,9 +392,7 @@ class HeartRiskPipeline:
         df['direction'] = np.where(df['shap_value'] > 0, '↑ 推高风险',
                           np.where(df['shap_value'] < 0, '↓ 降低风险', '— 无影响'))
 
-        # 仅保留实际激活的特征：
-        #   对独热编码列，取 scaled_value > 0 的那一档
-        #   对连续/有序列，全部保留
+        # 仅保留实际激活的特征
         onehot_active = ~df['feature'].str.contains(r'_\d+\.\d+$') | (df['scaled_value'] > 0)
         df = df[onehot_active]
 
