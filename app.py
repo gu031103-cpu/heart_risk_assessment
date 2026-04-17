@@ -1,6 +1,6 @@
 """
 =============================================================================
-心脏病(CHD/MI)风险评估系统 - Streamlit 主应用 (复原版)
+心脏病(CHD/MI)风险评估系统 - Streamlit 主应用
 =============================================================================
 """
 
@@ -51,7 +51,7 @@ def load_pipeline(artifacts_dir: str) -> HeartRiskPipeline:
     return HeartRiskPipeline(artifacts_dir=artifacts_dir)
 
 # ============================================================================
-# 2. 侧边栏：完整复原
+# 2. 侧边栏
 # ============================================================================
 with st.sidebar:
     st.markdown("## ❤️ 系统信息")
@@ -96,17 +96,19 @@ if "assessment" not in st.session_state:
     st.session_state.assessment = None
 
 # ----------------------------------------------------------------------------
-# 3.A 问卷页 (复原布局并集成必填逻辑)
+# 3.A 问卷页 
 # ----------------------------------------------------------------------------
 def render_form() -> None:
     st.markdown("请按实际情况完成问卷。标注 <span class='mandatory-star'>*</span> 的题目为必填；其余题目若不确定可保持默认选项，系统将自动进行推断。", unsafe_allow_html=True)
 
-    col_a, col_b, _ = st.columns([1, 1, 6])
-    if col_a.button("🎲 填入示例答案"):
-        st.session_state.answers = _demo_high_risk_profile()
-        st.rerun()
-    if col_b.button("🧹 清空答案"):
+    # 修复清空按钮失效问题，并去除示例答案按钮
+    col_a, _ = st.columns([2, 8])
+    if col_a.button("🧹 清空所有选择", use_container_width=True):
         st.session_state.answers = {}
+        # 核心修复：强制销毁 Streamlit 底层为 radio 控件缓存的状态
+        for key in list(st.session_state.keys()):
+            if key.startswith("q_"):
+                del st.session_state[key]
         st.rerun()
 
     section_names = list(QUESTIONS.keys())
@@ -140,7 +142,7 @@ def render_form() -> None:
                     options=labels,
                     index=default_idx,
                     horizontal=True if len(labels) <= 4 else False,
-                    key=f"q_{key}",
+                    key=f"q_{key}", # 这个 key 就是上面清空逻辑所依赖的前缀
                     help=q.get("help"),
                 )
                 answers[key] = values[labels.index(chosen_label)]
@@ -155,7 +157,7 @@ def render_form() -> None:
             st.rerun()
 
 # ----------------------------------------------------------------------------
-# 3.B 结果页 (完整复原 HTML 渲染逻辑)
+# 3.B 结果页 
 # ----------------------------------------------------------------------------
 def render_result() -> None:
     res: RiskAssessment = st.session_state.assessment
@@ -195,12 +197,16 @@ def render_result() -> None:
         st.rerun()
     if c2.button("🆕 重新开始评估", use_container_width=True):
         st.session_state.answers = {}
+        # 同样需要在重新评估时清除缓存控件
+        for key in list(st.session_state.keys()):
+            if key.startswith("q_"):
+                del st.session_state[key]
         st.session_state.assessment = None
         st.session_state.stage = "form"
         st.rerun()
 
 # ============================================================================
-# 4. 辅助渲染函数 (复原 HTML/逻辑)
+# 4. 辅助渲染函数 
 # ============================================================================
 def _render_risk_legend(prob: float) -> None:
     bands = [("低风险", 0.0, LOW_RISK_QUANTILE, '#2ca02c'), ("中风险", LOW_RISK_QUANTILE, OPTIMAL_THRESHOLD, '#f1c40f'), ("中-高风险", OPTIMAL_THRESHOLD, HIGH_RISK_QUANTILE, '#ff7f0e'), ("高风险", HIGH_RISK_QUANTILE, 1.0, '#d62728')]
@@ -228,7 +234,7 @@ def _render_contributors(df: pd.DataFrame) -> None:
 def _render_recommendations(res: RiskAssessment) -> None:
     answers = res.raw_input
     tips = []
-    # 完整建议清单复原
+    
     if answers.get('_SMOKER3') in (1, 2): tips.append("🚭 **戒烟**:吸烟是冠心病最可干预的强风险因素。")
     if answers.get('_RFBING6') == 2: tips.append("🍷 **限酒**:避免短时间内大量饮酒。")
     if answers.get('EXERANY2') == 2: tips.append("🏃 **规律运动**:每周累计 ≥150 分钟中等强度有氧运动。")
@@ -244,9 +250,6 @@ def _render_recommendations(res: RiskAssessment) -> None:
     elif res.risk_level == "中风险": st.info("ℹ️ 建议每年做一次心血管健康体检。")
     else: st.success("✅ 继续保持健康生活方式。")
     for tip in tips: st.markdown(f"- {tip}")
-
-def _demo_high_risk_profile() -> dict:
-    return {'_AGE_G': 6, 'SEXVAR': 1, '_IMPRACE': 1, 'MARITAL': 3, '_EDUCAG': 2, '_INCOMG1': 2, 'EMPLOY1': 7, '_BMI5CAT': 4, 'VETERAN3': 1, '_STATE': 6, 'EXERANY2': 2, '_SMOKER3': 1, '_CURECI3': 1, '_RFBING6': 1, 'CVDSTRK3': 1, 'DIABETE4': 1, 'CHCOCNC1': 2, 'CHCCOPD3': 1, 'CHCKDNY2': 1, 'ADDEPEV3': 1, '_DRDXAR2': 1, '_LTASTH1': 2, '_RFHLTH': 2, '_PHYS14D': 3, '_MENT14D': 2, 'DEAF': 1, 'BLIND': 2, 'DECIDE': 1, 'DIFFWALK': 1, 'DIFFDRES': 2, 'DIFFALON': 1, '_HLTHPL2': 1, 'MEDCOST1': 1, 'PNEUVAC4': 2}
 
 # ============================================================================
 # 5. 主路由
