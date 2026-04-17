@@ -256,11 +256,15 @@ class HeartRiskPipeline:
         """
         参数
         ----
-        answers : 形如 {'SEXVAR': 1, '_AGE_G': 5, ...} 的字典
+        answers : 形如 {'SEXVAR': 1, '_AGE_G': None, ...} 的字典
         """
-        row = {col: answers.get(col, np.nan) for col in FEATURE_COLUMNS}
+        # 安全地将前端传来的 None 直接视为 np.nan
+        row = {col: (np.nan if answers.get(col) is None else answers.get(col)) 
+               for col in FEATURE_COLUMNS}
+        
         df = pd.DataFrame([row], columns=FEATURE_COLUMNS)
 
+        # 转换为 float 类型，如果全是 NaN 也会妥善保留为 np.nan 格式以供后续 Imputer 读取
         for col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce')
 
