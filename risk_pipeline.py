@@ -256,15 +256,11 @@ class HeartRiskPipeline:
         """
         参数
         ----
-        answers : 形如 {'SEXVAR': 1, '_AGE_G': None, ...} 的字典
+        answers : 形如 {'SEXVAR': 1, '_AGE_G': 5, ...} 的字典
         """
-        # 安全地将前端传来的 None 直接视为 np.nan
-        row = {col: (np.nan if answers.get(col) is None else answers.get(col)) 
-               for col in FEATURE_COLUMNS}
-        
+        row = {col: answers.get(col, np.nan) for col in FEATURE_COLUMNS}
         df = pd.DataFrame([row], columns=FEATURE_COLUMNS)
 
-        # 转换为 float 类型，如果全是 NaN 也会妥善保留为 np.nan 格式以供后续 Imputer 读取
         for col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce')
 
@@ -339,6 +335,10 @@ class HeartRiskPipeline:
         """
         # 6.1 转 DataFrame + 完整预处理
         df_raw = self.user_input_to_dataframe(answers)
+        
+        # [修改点] 溯源：记录由于用户未填写或选不确定而导致缺失的原始列
+        imputed_cols = [col for col in FEATURE_COLUMNS if pd.isna(df_raw[col].iloc[0])]
+        
         X = self._preprocess(df_raw)
 
         # 6.2 模型概率 & 风险等级
@@ -346,7 +346,9 @@ class HeartRiskPipeline:
         level, color = self._classify_risk(prob)
 
         # 6.3 SHAP 个体化解释
-        contributors = self._explain_individual(X, top_k=top_k)
+        # [修改点] 传入 imputed_cols
+        contributors = self._explain_individual(X, top_k=top_k, imputed_cols=imputed_cols)
+        
         base_val = float(self.explainer.expected_value) if self.explainer else 0.0
         if isinstance(base_val, (list, np.ndarray)):
             base_val = float(np.array(base_val).ravel()[-1])
@@ -362,10 +364,14 @@ class HeartRiskPipeline:
         )
 
     # ---------- 7. SHAP 解释 ----------
-    def _explain_individual(self, X: pd.DataFrame, top_k: int) -> pd.DataFrame:
+    def _explain_individual(self, X: pd.DataFrame, top_k: int, imputed_cols: List[str] = None) -> pd.DataFrame:
         """
         返回 top-K 贡献因子表。
         """
+        # [修改点] 防错处理
+        if imputed_cols is None:
+            imputed_cols = []
+            
         if self.explainer is None:
             # 退化方案：用模型自带 feature_importances_
             imp = getattr(self.model, 'feature_importances_', None)
@@ -378,6 +384,8 @@ class HeartRiskPipeline:
                 'shap_value': imp / (imp.max() + 1e-9),
                 'direction': '未知',
             })
+            # [修改点] 记录插补状态
+            df['is_imputed'] = df['feature'].apply(lambda f: any(f.startswith(c) for c in imputed_cols))
             return df.sort_values('shap_value', key=abs, ascending=False).head(top_k)
 
         sv_raw = self.explainer.shap_values(X)
@@ -395,6 +403,9 @@ class HeartRiskPipeline:
         })
         df['direction'] = np.where(df['shap_value'] > 0, '↑ 推高风险',
                           np.where(df['shap_value'] < 0, '↓ 降低风险', '— 无影响'))
+
+        # [修改点] 匹配特征列前缀是否属于被插补的原始列，并增加 'is_imputed' 标签
+        df['is_imputed'] = df['feature'].apply(lambda f: any(f.startswith(c) for c in imputed_cols))
 
         # 仅保留实际激活的特征
         onehot_active = ~df['feature'].str.contains(r'_\d+\.\d+$') | (df['scaled_value'] > 0)
