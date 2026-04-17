@@ -1,10 +1,7 @@
 """
 =============================================================================
-心脏病(CHD/MI)风险评估系统 - 主程序
+心脏病(CHD/MI)风险评估系统 - Streamlit 主应用 (复原版)
 =============================================================================
-功能优化：
-1. 区分必填项与可选项。必填项（无缺失值指标）移除 "不确定" 选项。
-2. 强化 UI 引导，说明系统如何利用后台模型进行缺失值推断。
 """
 
 from __future__ import annotations
@@ -15,40 +12,82 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-# 导入配置
+# 同目录导入
 sys.path.append(str(Path(__file__).parent))
-from risk_pipeline import (HeartRiskPipeline, RiskAssessment, OPTIMAL_THRESHOLD, 
-                           HIGH_RISK_QUANTILE, LOW_RISK_QUANTILE)
+from risk_pipeline import (
+    HeartRiskPipeline, RiskAssessment,
+    OPTIMAL_THRESHOLD, HIGH_RISK_QUANTILE, LOW_RISK_QUANTILE,
+)
 from questionnaire import QUESTIONS, MANDATORY_KEYS
 
-# ----------------------------------------------------------------------------
-# 1. 页面样式与基础配置
-# ----------------------------------------------------------------------------
+# ============================================================================
+# 0. 页面基础配置与原始 CSS
+# ============================================================================
 st.set_page_config(
     page_title="心脏病风险评估系统",
     page_icon="❤️",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
 st.markdown("""
 <style>
     .main-title { font-size: 2.2rem; font-weight: 700; color: #c0392b; margin-bottom: 0.2rem; }
     .subtitle   { color: #666; margin-bottom: 1.5rem; }
-    .risk-card  { padding: 1.5rem; border-radius: 12px; color: white; text-align: center; }
-    .risk-level { font-size: 2.2rem; font-weight: 800; margin: 0; }
-    .mandatory-label { color: #e74c3c; font-weight: bold; margin-right: 5px; }
-    .disclaimer { background: #fff5e6; padding: 1rem; border-left: 5px solid #f39c12; border-radius: 5px; color: #6b4f00; font-size: 0.9rem; }
+    .risk-card  { padding: 1.2rem 1.5rem; border-radius: 12px; color: white; text-align: center; }
+    .risk-level { font-size: 2rem; font-weight: 700; margin: 0; }
+    .risk-prob  { font-size: 1.1rem; opacity: 0.95; }
+    .mandatory-star { color: #c0392b; font-weight: bold; margin-right: 4px; }
+    .disclaimer { background: #fff5e6; padding: 1rem 1.2rem; border-left: 4px solid #f39c12; border-radius: 6px; color: #6b4f00; font-size: 0.92rem; }
+    .stProgress > div > div > div > div { background-color: #e74c3c; }
 </style>
 """, unsafe_allow_html=True)
 
-@st.cache_resource(show_spinner="🔧 正在初始化 AI 推理引擎...")
+# ============================================================================
+# 1. 加载推理管道
+# ============================================================================
+@st.cache_resource(show_spinner="🔧 正在加载模型与预处理管道...")
 def load_pipeline(artifacts_dir: str) -> HeartRiskPipeline:
     return HeartRiskPipeline(artifacts_dir=artifacts_dir)
 
-# ----------------------------------------------------------------------------
-# 2. 状态管理
-# ----------------------------------------------------------------------------
+# ============================================================================
+# 2. 侧边栏：完整复原
+# ============================================================================
+with st.sidebar:
+    st.markdown("## ❤️ 系统信息")
+    st.markdown("""
+    **模型**: LightGBM (经 Optuna 调优)
+    **AUC-ROC**: **0.8376**
+    **决策阈值**: 0.486
+    **训练数据**: BRFSS 2024 (45 万份问卷)
+    **特征数**: 48 个
+    """)
+
+    st.markdown("---")
+    st.markdown("## 📁 文件路径配置")
+    artifacts_dir = st.text_input(
+        "预处理产物 (.pkl) 所在目录",
+        value=os.environ.get("ARTIFACTS_DIR", "."),
+        help="该目录下需包含 model_LightGBM.pkl, scaler.pkl等文件。",
+    )
+
+    st.markdown("---")
+    st.markdown("## ⚠️ 免责声明")
+    st.markdown("""
+    <div class="disclaimer">
+    本系统是基于人群流行病学数据训练的 <b>风险预测辅助工具</b>，
+    <b>不构成任何形式的临床诊断、医疗建议或治疗依据</b>。<br><br>
+    评估结果仅反映模型基于您所填问卷给出的统计学风险概率。<br><br>
+    若您出现胸痛、气促、持续乏力等症状，请立即就医。
+    </div>
+    """, unsafe_allow_html=True)
+
+# ============================================================================
+# 3. 主区域逻辑
+# ============================================================================
+st.markdown('<div class="main-title">❤️ 心脏病 (CHD/MI) 风险评估系统</div>', unsafe_allow_html=True)
+st.markdown('<div class="subtitle">基于 2024 BRFSS 数据 · 支持缺失值智能推断</div>', unsafe_allow_html=True)
+
 if "stage" not in st.session_state:
     st.session_state.stage = "form"
 if "answers" not in st.session_state:
@@ -57,39 +96,40 @@ if "assessment" not in st.session_state:
     st.session_state.assessment = None
 
 # ----------------------------------------------------------------------------
-# 3. 问卷页面渲染
+# 3.A 问卷页 (复原布局并集成必填逻辑)
 # ----------------------------------------------------------------------------
-def render_form():
-    st.markdown('<div class="main-title">❤️ 心脏病 (CHD/MI) 风险评估系统</div>', unsafe_allow_html=True)
-    st.markdown("本系统利用 2024 BRFSS 大规模人群数据训练。标注 <span class='mandatory-label'>*</span> 的题目为必选项，其余题目若不确定可保持默认。系统会自动为您推断缺失的信息。", unsafe_allow_html=True)
-    
-    # 顶部操作栏
-    c1, c2, _ = st.columns([1, 1, 6])
-    if c1.button("🎲 载入示例数据", help="填入一份典型的高风险案例"):
-        st.session_state.answers = _get_demo_data()
+def render_form() -> None:
+    st.markdown("请按实际情况完成问卷。标注 <span class='mandatory-star'>*</span> 的题目为必填；其余题目若不确定可保持默认选项，系统将自动进行推断。", unsafe_allow_html=True)
+
+    col_a, col_b, _ = st.columns([1, 1, 6])
+    if col_a.button("🎲 填入示例答案"):
+        st.session_state.answers = _demo_high_risk_profile()
         st.rerun()
-    if c2.button("🧹 清空所有选择"):
+    if col_b.button("🧹 清空答案"):
         st.session_state.answers = {}
         st.rerun()
 
-    # 问卷板块渲染
-    tabs = st.tabs(list(QUESTIONS.keys()))
-    current_answers = dict(st.session_state.answers)
+    section_names = list(QUESTIONS.keys())
+    tabs = st.tabs(section_names)
+    answers: dict = dict(st.session_state.answers)
 
-    for tab, (sec_name, questions) in zip(tabs, QUESTIONS.items()):
+    for tab, sec_name in zip(tabs, section_names):
         with tab:
-            for q in questions:
+            for q in QUESTIONS[sec_name]:
                 key = q["key"]
                 labels = [opt[0] for opt in q["options"]]
                 values = [opt[1] for opt in q["options"]]
-                
+
+                # 必填项标识
                 is_mandatory = key in MANDATORY_KEYS
-                display_label = f"{'* ' if is_mandatory else ''}{q['label']}"
-                
-                # 确定默认索引
-                if key in current_answers:
+                display_label = q["label"]
+                if is_mandatory:
+                    display_label = f"* {display_label}"
+
+                # 索引逻辑：必填项默认第一个，可选项默认最后一个(None)
+                if key in answers:
                     try:
-                        default_idx = values.index(current_answers[key])
+                        default_idx = values.index(answers[key])
                     except ValueError:
                         default_idx = 0 if is_mandatory else len(values) - 1
                 else:
@@ -100,99 +140,117 @@ def render_form():
                     options=labels,
                     index=default_idx,
                     horizontal=True if len(labels) <= 4 else False,
-                    key=f"radio_{key}"
+                    key=f"q_{key}",
+                    help=q.get("help"),
                 )
-                current_answers[key] = values[labels.index(chosen_label)]
+                answers[key] = values[labels.index(chosen_label)]
 
-    st.session_state.answers = current_answers
-
+    st.session_state.answers = answers
     st.markdown("---")
-    if st.button("🔍 开始多维风险评估", type="primary", use_container_width=True):
-        artifacts_dir = os.environ.get("ARTIFACTS_DIR", ".")
+    if st.button("🔍 开始评估风险", type="primary", use_container_width=True):
         pipeline = load_pipeline(artifacts_dir)
-        with st.spinner("⏳ 后台模型正在进行多重插补与风险测算..."):
-            st.session_state.assessment = pipeline.assess(current_answers)
+        with st.spinner("⏳ 模型正在评估中..."):
+            st.session_state.assessment = pipeline.assess(answers, top_k=8)
             st.session_state.stage = "result"
             st.rerun()
 
 # ----------------------------------------------------------------------------
-# 4. 结果展示页面渲染
+# 3.B 结果页 (完整复原 HTML 渲染逻辑)
 # ----------------------------------------------------------------------------
-def render_result():
+def render_result() -> None:
     res: RiskAssessment = st.session_state.assessment
-    st.markdown(f"### 评估结果报告")
-    
-    col1, col2 = st.columns([1, 2])
-    with col1:
+    if res is None:
+        st.session_state.stage = "form"
+        st.rerun()
+        return
+
+    left, right = st.columns([1, 2])
+    with left:
         st.markdown(f"""
-        <div class="risk-card" style="background:{res.risk_color};">
-            <p style="font-size: 1.1rem; margin-bottom: 0.5rem;">预测患病概率</p>
-            <p class="risk-level">{res.probability * 100:.1f}%</p>
-            <p>风险等级：<strong>{res.risk_level}</strong></p>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col2:
-        st.markdown("#### 风险分布参考")
+            <div class="risk-card" style="background:{res.risk_color};">
+                <p class="risk-prob">您的预测患病概率</p>
+                <p class="risk-level">{res.probability * 100:.1f}%</p>
+                <p class="risk-prob">风险等级: <b>{res.risk_level}</b></p>
+            </div>
+            """, unsafe_allow_html=True)
+
+    with right:
+        st.markdown("#### 概率刻度尺")
         st.progress(min(1.0, max(0.0, res.probability)))
-        st.caption(f"决策阈值: {OPTIMAL_THRESHOLD} | 低风险线: {LOW_RISK_QUANTILE} | 高风险线: {HIGH_RISK_QUANTILE}")
-        _draw_legend(res.probability)
+        st.caption(f"📍 阈值 = {OPTIMAL_THRESHOLD} | 低风险 ≤ {LOW_RISK_QUANTILE} | 高风险 ≥ {HIGH_RISK_QUANTILE}")
+        _render_risk_legend(res.probability)
 
     st.markdown("---")
-    st.markdown("#### 🎯 个体化影响因子 (SHAP 贡献度分析)")
-    _render_shap_bars(res.top_contributors)
+    st.markdown("### 🎯 影响您此次评估的关键因素")
+    _render_contributors(res.top_contributors)
 
     st.markdown("---")
-    st.markdown("#### 💡 健康管理建议")
-    _render_tips(res)
+    st.markdown("### 💡 基于评估结果的健康建议")
+    _render_recommendations(res)
 
     st.markdown("---")
-    if st.button("⬅️ 返回修改问卷", use_container_width=True):
+    c1, c2 = st.columns(2)
+    if c1.button("⬅️ 返回修改问卷", use_container_width=True):
+        st.session_state.stage = "form"
+        st.rerun()
+    if c2.button("🆕 重新开始评估", use_container_width=True):
+        st.session_state.answers = {}
+        st.session_state.assessment = None
         st.session_state.stage = "form"
         st.rerun()
 
-# ----------------------------------------------------------------------------
-# 辅助函数
-# ----------------------------------------------------------------------------
-def _draw_legend(prob):
-    bands = [("低风险", 0, LOW_RISK_QUANTILE, '#2ca02c'), ("中风险", LOW_RISK_QUANTILE, OPTIMAL_THRESHOLD, '#f1c40f'), ("中高危", OPTIMAL_THRESHOLD, HIGH_RISK_QUANTILE, '#ff7f0e'), ("极高危", HIGH_RISK_QUANTILE, 1, '#d62728')]
+# ============================================================================
+# 4. 辅助渲染函数 (复原 HTML/逻辑)
+# ============================================================================
+def _render_risk_legend(prob: float) -> None:
+    bands = [("低风险", 0.0, LOW_RISK_QUANTILE, '#2ca02c'), ("中风险", LOW_RISK_QUANTILE, OPTIMAL_THRESHOLD, '#f1c40f'), ("中-高风险", OPTIMAL_THRESHOLD, HIGH_RISK_QUANTILE, '#ff7f0e'), ("高风险", HIGH_RISK_QUANTILE, 1.0, '#d62728')]
     cols = st.columns(len(bands))
     for col, (name, lo, hi, color) in zip(cols, bands):
-        is_active = lo <= prob < hi or (hi == 1 and prob >= lo)
-        border = "3px solid #333" if is_active else "1px solid #eee"
-        col.markdown(f"<div style='border:{border}; text-align:center; padding:5px; background:{color}22;'>{name}</div>", unsafe_allow_html=True)
+        active = lo <= prob < hi or (hi == 1.0 and prob >= lo)
+        border = '3px solid #2c3e50' if active else '1px solid #ddd'
+        col.markdown(f"<div style='border:{border}; border-radius:6px; padding:6px; text-align:center; background:{color}30;'><div style='color:{color}; font-weight:700;'>{name}</div><div style='font-size:0.8rem;'>{lo:.3f} – {hi:.3f}</div></div>", unsafe_allow_html=True)
 
-def _render_shap_bars(df):
+def _render_contributors(df: pd.DataFrame) -> None:
     if df is None or df.empty:
-        st.info("数据完整度极高，所有因子贡献均衡。")
+        st.info("当前模型不支持 SHAP 解释。")
         return
+    max_abs = float(df['shap_value'].abs().max() or 1e-9)
     for _, row in df.iterrows():
-        val = row['shap_value']
-        color = "#e74c3c" if val > 0 else "#2ecc71"
+        shap_val = float(row['shap_value'])
+        pct = abs(shap_val) / max_abs * 100
+        color, side, arrow = ('#d62728', 'left', '↑') if shap_val > 0 else ('#2ca02c', 'right', '↓')
+        bar_html = f"<div style='background:#f0f0f0; border-radius:4px; height:18px; position:relative; margin-top:4px;'><div style='background:{color}; width:{pct:.1f}%; height:100%; border-radius:4px; float:{side};'></div></div>"
         c1, c2, c3 = st.columns([3, 5, 2])
-        c1.write(row['display_name'])
-        c2.progress(min(1.0, abs(val) * 2)) # 示意性展示
-        c3.markdown(f"<span style='color:{color}'>{'↑' if val > 0 else '↓'} {abs(val):.3f}</span>", unsafe_allow_html=True)
+        c1.markdown(f"**{row['display_name']}**")
+        c2.markdown(bar_html, unsafe_allow_html=True)
+        c3.markdown(f"<span style='color:{color}; font-weight:600;'>{arrow} {abs(shap_val):.3f}</span>", unsafe_allow_html=True)
 
-def _render_tips(res):
-    ans = res.raw_input
-    if res.risk_level in ["高风险", "中-高风险"]:
-        st.warning("⚠️ 检测到高危信号。您的多项生理指标或病史与心脏病高度相关，建议尽快预约心内科医生进行专业检查。")
-    
+def _render_recommendations(res: RiskAssessment) -> None:
+    answers = res.raw_input
     tips = []
-    if ans.get('_SMOKER3') in [1, 2]: tips.append("🚭 **戒烟计划**：吸烟是冠心病最强的单一可控因素。")
-    if ans.get('EXERANY2') == 2: tips.append("🏃 **加强锻炼**：即使是每天 20 分钟的快走也能显著降低风险。")
-    if ans.get('_BMI5CAT') == 4: tips.append("⚖️ **体重管理**：肥胖会增加心脏泵血压力，建议通过饮食控制 BMI。")
-    
-    if not tips:
-        st.success("✨ 继续保持当前健康的生活方式！定期体检是关键。")
-    else:
-        for t in tips: st.markdown(f"- {t}")
+    # 完整建议清单复原
+    if answers.get('_SMOKER3') in (1, 2): tips.append("🚭 **戒烟**:吸烟是冠心病最可干预的强风险因素。")
+    if answers.get('_RFBING6') == 2: tips.append("🍷 **限酒**:避免短时间内大量饮酒。")
+    if answers.get('EXERANY2') == 2: tips.append("🏃 **规律运动**:每周累计 ≥150 分钟中等强度有氧运动。")
+    if answers.get('_BMI5CAT') in (3, 4): tips.append("⚖️ **控制体重**:建议结合饮食与运动减重 5-10%。")
+    if answers.get('DIABETE4') == 1: tips.append("🩸 **管好血糖**:糖尿病显著加速冠脉硬化。目标通常 <7%。")
+    if answers.get('CVDSTRK3') == 1: tips.append("⚠️ **二级预防**:既往中风者属心血管病高危人群。")
+    if answers.get('_RFHLTH') == 2: tips.append("🌿 **改善健康**:建议做一次全面体检。")
+    if answers.get('_PHYS14D') == 3 or answers.get('_MENT14D') == 3: tips.append("🧠 **关注身心**:关注长期身体或情绪不佳。")
+    if answers.get('PNEUVAC4') == 2 and (answers.get('_AGE_G') or 0) >= 5: tips.append("💉 **肺炎疫苗**:65+ 老人接种可降低心血管事件风险。")
+    tips.append("🥗 **健康饮食**:多蔬菜水果、全谷物，少加工肉。")
 
-def _get_demo_data():
-    return {'_AGE_G': 6, 'SEXVAR': 1, '_IMPRACE': 1, '_STATE': 6, 'DIABETE4': 1, '_SMOKER3': 1, 'CVDSTRK3': 1}
+    if res.risk_level in ("高风险", "中-高风险"): st.warning("⚠️ 强烈建议尽快前往心内科检查。")
+    elif res.risk_level == "中风险": st.info("ℹ️ 建议每年做一次心血管健康体检。")
+    else: st.success("✅ 继续保持健康生活方式。")
+    for tip in tips: st.markdown(f"- {tip}")
 
-# 运行
+def _demo_high_risk_profile() -> dict:
+    return {'_AGE_G': 6, 'SEXVAR': 1, '_IMPRACE': 1, 'MARITAL': 3, '_EDUCAG': 2, '_INCOMG1': 2, 'EMPLOY1': 7, '_BMI5CAT': 4, 'VETERAN3': 1, '_STATE': 6, 'EXERANY2': 2, '_SMOKER3': 1, '_CURECI3': 1, '_RFBING6': 1, 'CVDSTRK3': 1, 'DIABETE4': 1, 'CHCOCNC1': 2, 'CHCCOPD3': 1, 'CHCKDNY2': 1, 'ADDEPEV3': 1, '_DRDXAR2': 1, '_LTASTH1': 2, '_RFHLTH': 2, '_PHYS14D': 3, '_MENT14D': 2, 'DEAF': 1, 'BLIND': 2, 'DECIDE': 1, 'DIFFWALK': 1, 'DIFFDRES': 2, 'DIFFALON': 1, '_HLTHPL2': 1, 'MEDCOST1': 1, 'PNEUVAC4': 2}
+
+# ============================================================================
+# 5. 主路由
+# ============================================================================
 if st.session_state.stage == "form":
     render_form()
 else:
