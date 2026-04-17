@@ -283,6 +283,8 @@ class HeartRiskPipeline:
 
         # 4.5 独热编码
         nominal = [c for c in NOMINAL_COLS if c in df.columns]
+        for col in nominal:
+            df[col] = df[col].astype(float)
         df_enc = pd.get_dummies(df, columns=nominal, drop_first=False)
 
         # 4.6 列对齐：补齐训练时见过但本样本没有的列，移除多余列
