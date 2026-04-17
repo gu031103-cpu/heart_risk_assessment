@@ -101,16 +101,6 @@ if "assessment" not in st.session_state:
 def render_form() -> None:
     st.markdown("请按实际情况完成问卷。标注 <span class='mandatory-star'>*</span> 的题目为必填；其余题目若不确定可保持默认选项，系统将自动进行推断。", unsafe_allow_html=True)
 
-    # 修复清空按钮失效问题，并去除示例答案按钮
-    col_a, _ = st.columns([2, 8])
-    if col_a.button("🧹 清空所有选择", use_container_width=True):
-        st.session_state.answers = {}
-        # 核心修复：强制销毁 Streamlit 底层为 radio 控件缓存的状态
-        for key in list(st.session_state.keys()):
-            if key.startswith("q_"):
-                del st.session_state[key]
-        st.rerun()
-
     section_names = list(QUESTIONS.keys())
     tabs = st.tabs(section_names)
     answers: dict = dict(st.session_state.answers)
@@ -142,7 +132,7 @@ def render_form() -> None:
                     options=labels,
                     index=default_idx,
                     horizontal=True if len(labels) <= 4 else False,
-                    key=f"q_{key}", # 这个 key 就是上面清空逻辑所依赖的前缀
+                    key=f"q_{key}",
                     help=q.get("help"),
                 )
                 answers[key] = values[labels.index(chosen_label)]
@@ -197,7 +187,7 @@ def render_result() -> None:
         st.rerun()
     if c2.button("🆕 重新开始评估", use_container_width=True):
         st.session_state.answers = {}
-        # 同样需要在重新评估时清除缓存控件
+        # 重置按钮保留底层清除逻辑，确保能回到初始状态
         for key in list(st.session_state.keys()):
             if key.startswith("q_"):
                 del st.session_state[key]
