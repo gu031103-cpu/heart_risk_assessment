@@ -215,10 +215,12 @@ def _parse_feature(feature: str):
     return feature, None
 
 
-def _get_user_choice_text(feature: str, raw_input: dict) -> tuple:
+def _get_user_choice_text(feature: str,
+                          raw_input: dict,
+                          imputed_values=None) -> tuple:
     """
     返回 (label_text, is_imputed)
-      label_text  : 该 feature 对应的"用户实际选择"文字
+      label_text  : 该 feature 对应的"用户实际选择"或"系统推断出的具体选项"
       is_imputed  : 是否因不确定/拒绝回答而被系统推断
     """
     orig, _ = _parse_feature(feature)
@@ -232,13 +234,25 @@ def _get_user_choice_text(feature: str, raw_input: dict) -> tuple:
         return f"BMI = {bmi:.1f} ({cat_short})", False
 
     raw_val = raw_input.get(orig)
-    if raw_val is None:
-        return "系统推断", True
 
-    label = VALUE_LABEL_MAP.get(orig, {}).get(raw_val, str(raw_val))
-    # 简化:只保留中文部分,去掉英文括号注释,使展示更紧凑
-    short = re.split(r'\s*\(', label)[0].strip()
-    return short, False
+    # ---- 用户已作答:常规回显 ----
+    if raw_val is not None:
+        label = VALUE_LABEL_MAP.get(orig, {}).get(raw_val, str(raw_val))
+        short = re.split(r'\s*\(', label)[0].strip()
+        return short, False
+
+    # ---- 用户未作答:查系统推断出的具体值 ----
+    if imputed_values:
+        imp_val = imputed_values.get(orig)
+        if imp_val is not None:
+            # 插补结果可能是 float(1.0) 或 round 后的整数,统一归一到 int 查表
+            key_int = int(round(float(imp_val)))
+            label = VALUE_LABEL_MAP.get(orig, {}).get(key_int, f"推断值={imp_val:g}")
+            short = re.split(r'\s*\(', label)[0].strip()
+            return short, True
+
+    # 极端兜底:没有 imputed_values 或该字段不在其中
+    return "系统推断", True
 
 
 # ============================================================================
@@ -458,7 +472,7 @@ def render_result() -> None:
         "🟢 **绿色(左侧)** 表示降低您的风险, "
         "数值为 SHAP 归因值(对数几率空间)。"
     )
-    _render_contributors(res.top_contributors, res.raw_input)
+    _render_contributors(res.top_contributors, res.raw_input, res.imputed_values)
 
     st.markdown("---")
     st.markdown("### 💡 基于评估结果的健康建议")
@@ -502,8 +516,10 @@ def _render_risk_legend(prob: float) -> None:
         )
 
 
-def _render_contributors(df: pd.DataFrame, raw_input: dict) -> None:
-    """以双向居中柱状图样式展示 SHAP 贡献因子,并标注用户选项。"""
+def _render_contributors(df: pd.DataFrame,
+                         raw_input: dict,
+                         imputed_values=None) -> None:
+    """以双向居中柱状图样式展示 SHAP 贡献因子,并标注用户选项(含系统推断值)。"""
     if df is None or df.empty:
         st.info("当前模型不支持 SHAP 解释。")
         return
@@ -518,7 +534,7 @@ def _render_contributors(df: pd.DataFrame, raw_input: dict) -> None:
         shap_val     = float(row['shap_value'])
         bar_pct      = abs(shap_val) / max_abs * 100  # 占半边的百分比
 
-        user_choice, is_imputed = _get_user_choice_text(feature, raw_input)
+        user_choice, is_imputed = _get_user_choice_text(feature, raw_input, imputed_values)
         if is_imputed:
             has_imputed = True
 
@@ -573,8 +589,8 @@ def _render_contributors(df: pd.DataFrame, raw_input: dict) -> None:
 
     if has_imputed:
         st.info(
-            "ℹ️ 标有 **⚠ 系统推断** 的因素是因您选择了「不确定 / 拒绝回答」"
-            "而由模型基于人群分布自动推断的结果。 "
+            "ℹ️ 标有 **⚠ 系统推断** 的选项是因您填写了「不确定 / 拒绝回答」而由模型"
+            "基于人群分布自动推断出的取值,并非您的真实作答。 "
             "如希望提高评估精度,建议返回问卷补全这些题目。"
         )
 
