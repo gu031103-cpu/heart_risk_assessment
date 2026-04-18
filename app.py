@@ -114,6 +114,7 @@ st.markdown("""
     display: flex; align-items: center; gap: 14px;
     padding: 10px 6px; border-bottom: 1px solid #f0f2f5;
     transition: background .15s;
+    flex-wrap: nowrap;
 }
 .contrib-row:hover { background: #fafbfc; border-radius: 6px; }
 .contrib-row:last-child { border-bottom: none; }
@@ -151,6 +152,53 @@ st.markdown("""
     flex: 0 0 80px; text-align: center;
     font-weight: 700; font-size: 1.02rem;
     font-variant-numeric: tabular-nums;
+}
+
+/* ==== 移动端响应式: 竖屏手机适配 ==== */
+@media (max-width: 640px) {
+    /* 整体容器缩减内边距 */
+    .main .block-container { padding-left: 0.6rem !important; padding-right: 0.6rem !important; }
+
+    /* 关键因素: 标签独占一行, 柱状图+数值在第二行 */
+    .contrib-wrap { padding: 8px 10px; }
+    .contrib-row {
+        flex-wrap: wrap;
+        gap: 4px 8px;
+        padding: 10px 4px;
+    }
+    .contrib-label {
+        flex: 0 0 100%;   /* 标签独占整行 */
+        min-width: 0;
+    }
+    .contrib-feature-name { font-size: 0.88rem; }
+    .contrib-user-choice  { font-size: 0.76rem; }
+
+    .contrib-bar-container {
+        flex: 1;          /* 占满剩余宽度 */
+        min-width: 0;
+        height: 24px;
+    }
+    .contrib-bar-fill { height: 18px; }
+
+    .contrib-value {
+        flex: 0 0 64px;
+        font-size: 0.9rem;
+    }
+
+    /* 风险刻度图例: 文字缩小 */
+    .legend-name  { font-size: 0.78rem; }
+    .legend-range { font-size: 0.68rem; }
+
+    /* 风险卡片 */
+    .risk-card .risk-level { font-size: 2rem; }
+    .risk-card .risk-prob  { font-size: 0.88rem; }
+
+    /* 系统推断卡片: 单列 */
+    .imputed-list-wrap { grid-template-columns: 1fr; }
+
+    /* 标题字号 */
+    .main-title { font-size: 1.7rem; }
+    .subtitle   { font-size: 0.85rem; }
 }
 
 /* ==== 系统推断清单 (新增) ==== */
