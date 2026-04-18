@@ -5,6 +5,8 @@
 集成逻辑：
 1. MANDATORY_KEYS 定义了预处理阶段无缺失值的指标，这些项为必填。
 2. 脚本会自动为非必填项追加 "不确定 / 拒绝回答" (None) 选项。
+3. _BMI5CAT 在前端由用户输入身高体重后自动计算（见 app.py），
+   在此仍保留字段定义以保证选项 → 中文标签的反查映射可用。
 """
 
 from typing import Dict, List
@@ -14,22 +16,22 @@ MANDATORY_KEYS = ['_AGE_G', 'SEXVAR', '_IMPRACE', '_STATE']
 
 # 完整的州列表配置
 STATE_OPTIONS = [
-    ("加利福尼亚 California", 6), ("纽约 New York", 36), ("德克萨斯 Texas", 48), 
+    ("加利福尼亚 California", 6), ("纽约 New York", 36), ("德克萨斯 Texas", 48),
     ("华盛顿 Washington", 53), ("佛罗里达 Florida", 12), ("伊利诺伊 Illinois", 17),
-    ("阿拉巴马 Alabama", 1), ("阿拉斯加 Alaska", 2), ("亚利桑那 Arizona", 4), 
-    ("阿肯色 Arkansas", 5), ("科罗拉多 Colorado", 8), ("康涅狄格 Connecticut", 9), 
-    ("特拉华 Delaware", 10), ("佐治亚 Georgia", 13), ("夏威夷 Hawaii", 15), 
-    ("爱达荷 Idaho", 16), ("印第安纳 Indiana", 18), ("爱荷华 Iowa", 19), 
-    ("堪萨斯 Kansas", 20), ("肯塔基 Kentucky", 21), ("路易斯安那 Louisiana", 22), 
-    ("缅因 Maine", 23), ("马里兰 Maryland", 24), ("马萨诸塞 Massachusetts", 25), 
-    ("密歇根 Michigan", 26), ("明尼苏达 Minnesota", 27), ("密西西比 Mississippi", 28), 
-    ("密苏里 Missouri", 29), ("蒙大拿 Montana", 30), ("内布拉斯加 Nebraska", 31), 
-    ("内华达 Nevada", 32), ("新罕布什尔 New Hampshire", 33), ("新泽西 New Jersey", 34), 
-    ("新墨西哥 New Mexico", 35), ("北卡罗来纳 North Carolina", 37), ("北达科他 North Dakota", 38), 
-    ("俄亥俄 Ohio", 39), ("俄克拉何马 Oklahoma", 40), ("俄勒冈 Oregon", 41), 
-    ("宾夕法尼亚 Pennsylvania", 42), ("罗得岛 Rhode Island", 44), ("南卡罗来纳 South Carolina", 45), 
-    ("南达科他 South Dakota", 46), ("田纳西 Tennessee", 47), ("犹他 Utah", 49), 
-    ("佛蒙特 Vermont", 50), ("弗吉尼亚 Virginia", 51), ("西弗吉尼亚 West Virginia", 54), 
+    ("阿拉巴马 Alabama", 1), ("阿拉斯加 Alaska", 2), ("亚利桑那 Arizona", 4),
+    ("阿肯色 Arkansas", 5), ("科罗拉多 Colorado", 8), ("康涅狄格 Connecticut", 9),
+    ("特拉华 Delaware", 10), ("佐治亚 Georgia", 13), ("夏威夷 Hawaii", 15),
+    ("爱达荷 Idaho", 16), ("印第安纳 Indiana", 18), ("爱荷华 Iowa", 19),
+    ("堪萨斯 Kansas", 20), ("肯塔基 Kentucky", 21), ("路易斯安那 Louisiana", 22),
+    ("缅因 Maine", 23), ("马里兰 Maryland", 24), ("马萨诸塞 Massachusetts", 25),
+    ("密歇根 Michigan", 26), ("明尼苏达 Minnesota", 27), ("密西西比 Mississippi", 28),
+    ("密苏里 Missouri", 29), ("蒙大拿 Montana", 30), ("内布拉斯加 Nebraska", 31),
+    ("内华达 Nevada", 32), ("新罕布什尔 New Hampshire", 33), ("新泽西 New Jersey", 34),
+    ("新墨西哥 New Mexico", 35), ("北卡罗来纳 North Carolina", 37), ("北达科他 North Dakota", 38),
+    ("俄亥俄 Ohio", 39), ("俄克拉何马 Oklahoma", 40), ("俄勒冈 Oregon", 41),
+    ("宾夕法尼亚 Pennsylvania", 42), ("罗得岛 Rhode Island", 44), ("南卡罗来纳 South Carolina", 45),
+    ("南达科他 South Dakota", 46), ("田纳西 Tennessee", 47), ("犹他 Utah", 49),
+    ("佛蒙特 Vermont", 50), ("弗吉尼亚 Virginia", 51), ("西弗吉尼亚 West Virginia", 54),
     ("威斯康星 Wisconsin", 55), ("怀俄明 Wyoming", 56), ("其他/非美国地区", 99)
 ]
 
@@ -63,12 +65,16 @@ QUESTIONS: Dict[str, List[Dict]] = {
              ("未完成高中", 1), ("高中毕业", 2),
              ("就读大学/技校", 3), ("大学/技校毕业", 4),
          ]},
+        # ✦【已修改】移除 $ 符号，避免被 Streamlit/Markdown 误识别为 LaTeX 公式
         {"key": "_INCOMG1", "label": "家庭年收入(美元)",
          "options": [
-             ("少于 $15,000", 1), ("$15,000 – $25,000", 2),
-             ("$25,000 – $35,000", 3), ("$35,000 – $50,000", 4),
-             ("$50,000 – $100,000", 5), ("$100,000 – $200,000", 6),
-             ("$200,000 及以上", 7),
+             ("少于 15,000 美元", 1),
+             ("15,000 ~ 25,000 美元", 2),
+             ("25,000 ~ 35,000 美元", 3),
+             ("35,000 ~ 50,000 美元", 4),
+             ("50,000 ~ 100,000 美元", 5),
+             ("100,000 ~ 200,000 美元", 6),
+             ("200,000 美元及以上", 7),
          ]},
         {"key": "EMPLOY1", "label": "您的就业状况",
          "options": [
@@ -81,6 +87,7 @@ QUESTIONS: Dict[str, List[Dict]] = {
              ("退休 (Retired)", 7),
              ("无法工作 (Unable to work)", 8),
          ]},
+        # 字段保留以便特征反查映射；前端实际由身高/体重输入计算（见 app.py）
         {"key": "_BMI5CAT", "label": "您的 BMI(体重指数)分类",
          "help": "BMI = 体重(kg) ÷ 身高(m)² 。<18.5 偏瘦,18.5-24.9 正常,25-29.9 超重,≥30 肥胖。",
          "options": [
@@ -96,13 +103,20 @@ QUESTIONS: Dict[str, List[Dict]] = {
     ],
 
     "🚬 生活方式": [
-        {"key": "EXERANY2", "label": "过去 30 天您是否有过任何体育锻炼", "options": [("是", 1), ("否", 2)]},
+        # ✦【已修改】文案补充
+        {"key": "EXERANY2", "label": "除正常工作外,过去 30 天您是否有过任何体育锻炼",
+         "options": [("是", 1), ("否", 2)]},
         {"key": "_SMOKER3", "label": "您当前的吸烟状况",
          "options": [
              ("当前每日吸烟", 1), ("当前偶尔吸烟", 2), ("曾吸烟但已戒", 3), ("从不吸烟", 4),
          ]},
-        {"key": "_CURECI3", "label": "您当前是否使用电子烟", "options": [("不使用", 1), ("使用", 2)]},
-        {"key": "_RFBING6", "label": "您是否有暴饮行为", "options": [("否", 1), ("是", 2)]},
+        # ✦【已修改】顺序统一为 [是, 否]
+        {"key": "_CURECI3", "label": "您当前是否使用电子烟",
+         "options": [("是", 2), ("否", 1)]},
+        # ✦【已修改】顺序统一为 [是, 否] + 补充说明
+        {"key": "_RFBING6", "label": "您是否有暴饮行为",
+         "help": "暴饮定义:男性一次饮酒五杯及以上,女性一次饮酒四杯及以上。",
+         "options": [("是", 2), ("否", 1)]},
     ],
 
     "🩺 既往慢性病史": [
@@ -113,10 +127,14 @@ QUESTIONS: Dict[str, List[Dict]] = {
          ]},
         {"key": "CHCOCNC1", "label": "您是否曾被诊断为癌症(含黑色素瘤)", "options": [("是", 1), ("否", 2)]},
         {"key": "CHCCOPD3", "label": "您是否曾被诊断为慢阻肺/肺气肿/慢性支气管炎", "options": [("是", 1), ("否", 2)]},
-        {"key": "CHCKDNY2", "label": "您是否曾被诊断为肾病", "options": [("是", 1), ("否", 2)]},
+        # ✦【已修改】文案补充
+        {"key": "CHCKDNY2", "label": "您是否曾被诊断为肾病(不包括肾结石、膀胱感染或尿失禁)",
+         "options": [("是", 1), ("否", 2)]},
         {"key": "ADDEPEV3", "label": "您是否曾被诊断为抑郁症", "options": [("是", 1), ("否", 2)]},
         {"key": "_DRDXAR2", "label": "您是否曾被医生诊断为关节炎", "options": [("是", 1), ("否", 2)]},
-        {"key": "_LTASTH1", "label": "您一生中是否曾患有哮喘", "options": [("否", 1), ("是", 2)]},
+        # ✦【已修改】顺序统一为 [是, 否]
+        {"key": "_LTASTH1", "label": "您一生中是否曾患有哮喘",
+         "options": [("是", 2), ("否", 1)]},
     ],
 
     "♿ 健康状况与功能状态": [
@@ -128,7 +146,9 @@ QUESTIONS: Dict[str, List[Dict]] = {
         {"key": "DECIDE", "label": "您是否有注意力集中或记忆困难", "options": [("是", 1), ("否", 2)]},
         {"key": "DIFFWALK", "label": "您是否有行走或爬楼梯困难", "options": [("是", 1), ("否", 2)]},
         {"key": "DIFFDRES", "label": "您是否有穿衣或洗澡困难", "options": [("是", 1), ("否", 2)]},
-        {"key": "DIFFALON", "label": "您是否有独自外出办事的困难", "options": [("是", 1), ("否", 2)]},
+        # ✦【已修改】文案
+        {"key": "DIFFALON", "label": "由于身心状况,您是否有独自办事的困难",
+         "options": [("是", 1), ("否", 2)]},
     ],
 
     "🏥 医疗保健获取": [
@@ -144,6 +164,7 @@ for sec in QUESTIONS.values():
         if q['key'] not in MANDATORY_KEYS:
             q['options'].append(("不确定 / 拒绝回答", None))
 
+
 def get_default_answers() -> Dict[str, any]:
     """生成默认答案：必填项选第一个，可选项选 None。"""
     defaults = {}
@@ -154,3 +175,18 @@ def get_default_answers() -> Dict[str, any]:
             else:
                 defaults[q['key']] = None
     return defaults
+
+
+# ----------------------------------------------------------------------------
+# 反查工具：feature → 中文标签（供结果页显示用户选项）
+# ----------------------------------------------------------------------------
+def build_value_to_label_map() -> Dict[str, Dict]:
+    """
+    返回 {字段名: {选项值: 选项中文标签}} 的反查字典，
+    供 SHAP 结果页"用户选项"回显使用。
+    """
+    mapping: Dict[str, Dict] = {}
+    for sec in QUESTIONS.values():
+        for q in sec:
+            mapping[q['key']] = {opt[1]: opt[0] for opt in q['options']}
+    return mapping
