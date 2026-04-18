@@ -278,20 +278,46 @@ with st.sidebar:
     st.markdown("## ❤️ 系统信息")
     st.markdown(f"""
     <div class="sys-info">
-      <div class="metric-line"><span class="metric-key">模型架构</span><span class="metric-val">LightGBM (GBDT)</span></div>
-      <div class="metric-line"><span class="metric-key">超参调优</span><span class="metric-val">Optuna · 100 trials</span></div>
-      <div class="metric-line"><span class="metric-key">类别不平衡</span><span class="metric-val">scale_pos_weight</span></div>
-      <div class="metric-line"><span class="metric-key">交叉验证</span><span class="metric-val">5-Fold Stratified</span></div>
-      <div class="metric-line"><span class="metric-key">测试集 AUC-ROC</span><span class="metric-val">0.8376</span></div>
-      <div class="metric-line"><span class="metric-key">最优决策阈值</span><span class="metric-val">{_pct(OPTIMAL_THRESHOLD)}</span></div>
-      <div class="metric-line"><span class="metric-key">高风险阈值</span><span class="metric-val">{_pct(HIGH_RISK_QUANTILE)}</span></div>
-      <div class="metric-line"><span class="metric-key">低风险阈值</span><span class="metric-val">{_pct(LOW_RISK_QUANTILE)}</span></div>
-      <div class="metric-line"><span class="metric-key">特征工程</span><span class="metric-val">35 → 48 维 (One-Hot)</span></div>
-      <div class="metric-line"><span class="metric-key">缺失值处理</span><span class="metric-val">MICE 迭代插补</span></div>
-      <div class="metric-line"><span class="metric-key">归一化策略</span><span class="metric-val">MinMax Scaler</span></div>
-      <div class="metric-line"><span class="metric-key">个体可解释性</span><span class="metric-val">SHAP TreeExplainer</span></div>
-      <div class="metric-line"><span class="metric-key">数据来源</span><span class="metric-val">CDC BRFSS 2024</span></div>
-      <div class="metric-line"><span class="metric-key">样本规模</span><span class="metric-val">~45 万份问卷</span></div>
+      <div style="margin-bottom:0.65rem;">
+        <div style="color:#f39c12; font-weight:700; font-size:0.88rem; margin-bottom:0.45rem; letter-spacing:0.3px;">📖 系统简介</div>
+        <div style="color:#bdc3c7; font-size:0.81rem; line-height:1.65;">
+          本系统是您的心脏健康风险预测助手。基于美国疾控中心 (CDC) 2024 年超 45 万份权威数据打造。核心驱动采用先进的 LightGBM 机器学习模型。即使遇到不确定的问题，系统也能凭借大样本规律为您智能推断，提供专属的风险评估。
+        </div>
+      </div>
+      <div style="border-top:1px solid rgba(255,255,255,0.1); padding-top:0.6rem; margin-top:0.1rem; margin-bottom:0.65rem;">
+        <div style="color:#f39c12; font-weight:700; font-size:0.88rem; margin-bottom:0.45rem; letter-spacing:0.3px;">🎯 模型指标</div>
+        <div class="metric-line"><span class="metric-key">综合可信度 (AUC)</span><span class="metric-val">0.8376</span></div>
+        <div class="metric-line"><span class="metric-key">患病捕捉率 (敏感度)</span><span class="metric-val">80.68%</span></div>
+        <div class="metric-line"><span class="metric-key">健康识别力 (特异度)</span><span class="metric-val">70.94%</span></div>
+        <div class="metric-line"><span class="metric-key">预测准确率 (Accuracy)</span><span class="metric-val">71.85%</span></div>
+      </div>
+      <div style="border-top:1px solid rgba(255,255,255,0.1); padding-top:0.6rem; margin-bottom:0.65rem;">
+        <div style="color:#f39c12; font-weight:700; font-size:0.88rem; margin-bottom:0.45rem; letter-spacing:0.3px;">📊 风险分层</div>
+        <div class="metric-line">
+          <span style="color:#2ecc71; font-size:0.83rem;">🟢 低风险</span>
+          <span class="metric-val">0.0% – {_pct(LOW_RISK_QUANTILE)}</span>
+        </div>
+        <div class="metric-line">
+          <span style="color:#f1c40f; font-size:0.83rem;">🟡 中风险</span>
+          <span class="metric-val">{_pct(LOW_RISK_QUANTILE)} – {_pct(OPTIMAL_THRESHOLD)}</span>
+        </div>
+        <div class="metric-line">
+          <span style="color:#e67e22; font-size:0.83rem;">🟠 中-高风险</span>
+          <span class="metric-val">{_pct(OPTIMAL_THRESHOLD)} – {_pct(HIGH_RISK_QUANTILE)}</span>
+        </div>
+        <div class="metric-line">
+          <span style="color:#e74c3c; font-size:0.83rem;">🔴 高风险</span>
+          <span class="metric-val">{_pct(HIGH_RISK_QUANTILE)} – 100.0%</span>
+        </div>
+      </div>
+      <div style="border-top:1px solid rgba(255,255,255,0.1); padding-top:0.6rem;">
+        <div style="color:#f39c12; font-weight:700; font-size:0.88rem; margin-bottom:0.45rem; letter-spacing:0.3px;">💡 使用步骤</div>
+        <div style="color:#bdc3c7; font-size:0.81rem; line-height:1.9;">
+          <div>① <span style="color:#ecf0f1; font-weight:600;">填写问卷</span>：遇到不确定的题目可直接选"不确定/拒绝回答"。</div>
+          <div>② <span style="color:#ecf0f1; font-weight:600;">一键评估</span>：极速演算您的风险概率。</div>
+          <div>③ <span style="color:#ecf0f1; font-weight:600;">获取报告</span>：查看风险等级、关键因素及改善建议。</div>
+        </div>
+      </div>
     </div>
     """, unsafe_allow_html=True)
 
