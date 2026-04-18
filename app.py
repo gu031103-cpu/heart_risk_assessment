@@ -359,7 +359,7 @@ def _render_bmi_input(answers: dict, key_prefix: str = "bmi") -> None:
 def render_form() -> None:
     st.markdown(
         "请按实际情况完成问卷。标注 <span class='mandatory-star'>*</span> 的题目为必填;"
-        "其余题目若不确定可选择 <b>「不确定 / 拒绝回答」</b>,系统将基于人群分布自动进行智能推断。",
+        "其余题目若不确定可选择 <b>「不确定 / 拒绝回答」</b>,系统将自动进行智能推断。",
         unsafe_allow_html=True,
     )
 
@@ -590,7 +590,7 @@ def _render_contributors(df: pd.DataFrame,
     if has_imputed:
         st.info(
             "ℹ️ 标有 **⚠ 系统推断** 的选项是因您填写了「不确定 / 拒绝回答」而由模型"
-            "基于人群分布自动推断出的取值,并非您的真实作答。 "
+            "自动推断出的取值,并非您的真实作答。 "
             "如希望提高评估精度,建议返回问卷补全这些题目。"
         )
 
