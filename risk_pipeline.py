@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List, Tuple
 
 import joblib
@@ -165,6 +165,9 @@ class RiskAssessment:
     top_contributors: pd.DataFrame    # SHAP top-K 贡献因子（含中文名、值、SHAP）
     base_value: float                 # SHAP 基线（log-odds 空间）
     raw_input: Dict[str, float]       # 原始用户输入回显
+    # 系统为「不确定/拒绝回答」字段智能推断后的原始 BRFSS 编码值，
+    # 仅包含用户未作答的字段；用于结果页显示"系统推断出的具体选项"。
+    imputed_values: Dict[str, float] = field(default_factory=dict)
 
 
 # ----------------------------------------------------------------------------
@@ -274,8 +277,17 @@ class HeartRiskPipeline:
         return df
 
     # ---------- 4. 执行训练同款预处理 ----------
-    def _preprocess(self, df_raw: pd.DataFrame) -> pd.DataFrame:
+    def _preprocess(self, df_raw: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, float]]:
+        """
+        返回
+        ----
+        X_scaled       : 48 维已归一化特征向量（供模型预测）
+        imputed_values : {字段: 插补后原始 BRFSS 编码值} 仅包含原本为 NaN 的列
+        """
         df = df_raw.copy()
+
+        # 记录原本是 NaN（用户未作答或缺失编码）的列，用于追溯插补值
+        originally_nan_cols: List[str] = df.columns[df.iloc[0].isna()].tolist()
 
         # 4.1 低缺失列：众数插补
         if self.low_missing_cols and self.mode_imputer is not None:
@@ -297,6 +309,11 @@ class HeartRiskPipeline:
         if df.isnull().any().any():
             df = df.fillna(0)
 
+        # ★★ 在数值映射/独热编码之前捕获插补后、保持原始 BRFSS 编码的数值 ★★
+        imputed_values: Dict[str, float] = {
+            col: float(df.iloc[0][col]) for col in originally_nan_cols
+        }
+
         # 4.4 数值映射
         df = apply_feature_engineering_mappings(df)
 
@@ -316,7 +333,7 @@ class HeartRiskPipeline:
             columns=df_enc.columns, index=df_enc.index)
 
         # 4.8 选取最终 48 维特征
-        return df_scaled[FINAL_FEATURES]
+        return df_scaled[FINAL_FEATURES], imputed_values
 
     # ---------- 5. 风险等级分层 ----------
     @staticmethod
@@ -337,9 +354,9 @@ class HeartRiskPipeline:
         """
         对单个用户作风险评估，返回 RiskAssessment。
         """
-        # 6.1 转 DataFrame + 完整预处理
+        # 6.1 转 DataFrame + 完整预处理（同时拿到插补后的原始值）
         df_raw = self.user_input_to_dataframe(answers)
-        X = self._preprocess(df_raw)
+        X, imputed_values = self._preprocess(df_raw)
 
         # 6.2 模型概率 & 风险等级
         prob = float(self.model.predict_proba(X)[0, 1])
@@ -359,6 +376,7 @@ class HeartRiskPipeline:
             top_contributors= contributors,
             base_value      = base_val,
             raw_input       = answers,
+            imputed_values  = imputed_values,
         )
 
     # ---------- 7. SHAP 解释 ----------
