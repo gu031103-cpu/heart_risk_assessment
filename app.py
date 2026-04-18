@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 import os
+import re
 import sys
 from pathlib import Path
 import numpy as np
@@ -18,10 +19,13 @@ from risk_pipeline import (
     HeartRiskPipeline, RiskAssessment,
     OPTIMAL_THRESHOLD, HIGH_RISK_QUANTILE, LOW_RISK_QUANTILE,
 )
-from questionnaire import QUESTIONS, MANDATORY_KEYS
+from questionnaire import (
+    QUESTIONS, MANDATORY_KEYS,
+    build_value_to_label_map,
+)
 
 # ============================================================================
-# 0. 页面基础配置与原始 CSS
+# 0. 页面基础配置 + 升级版 CSS
 # ============================================================================
 st.set_page_config(
     page_title="心脏病风险评估系统",
@@ -32,61 +36,255 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-    .main-title { font-size: 2.2rem; font-weight: 700; color: #c0392b; margin-bottom: 0.2rem; }
-    .subtitle   { color: #666; margin-bottom: 1.5rem; }
-    .risk-card  { padding: 1.2rem 1.5rem; border-radius: 12px; color: white; text-align: center; }
-    .risk-level { font-size: 2rem; font-weight: 700; margin: 0; }
-    .risk-prob  { font-size: 1.1rem; opacity: 0.95; }
-    .mandatory-star { color: #c0392b; font-weight: bold; margin-right: 4px; }
-    .disclaimer { background: #fff5e6; padding: 1rem 1.2rem; border-left: 4px solid #f39c12; border-radius: 6px; color: #6b4f00; font-size: 0.92rem; }
-    .stProgress > div > div > div > div { background-color: #e74c3c; }
+/* ==== 全局容器 ==== */
+.main .block-container { padding-top: 1.4rem; max-width: 1200px; }
+
+/* ==== 标题区(渐变文字) ==== */
+.main-title {
+    font-size: 2.4rem; font-weight: 800;
+    background: linear-gradient(135deg, #c0392b 0%, #e74c3c 50%, #ff6b6b 100%);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 0.3rem; letter-spacing: -0.5px;
+}
+.subtitle {
+    color: #7f8c8d; margin-bottom: 1.5rem;
+    font-size: 0.98rem; font-weight: 400;
+}
+
+/* ==== 风险卡片(渐变 + 阴影) ==== */
+.risk-card {
+    padding: 1.8rem 1.5rem;
+    border-radius: 16px; color: white; text-align: center;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+}
+.risk-card .risk-prob {
+    font-size: 1rem; opacity: 0.95;
+    margin: 0.2rem 0; font-weight: 500;
+}
+.risk-card .risk-level {
+    font-size: 2.6rem; font-weight: 800;
+    margin: 0.4rem 0; line-height: 1;
+}
+
+/* ==== 必填星号(用于内文说明,而非 widget label) ==== */
+.mandatory-star { color: #c0392b; font-weight: bold; margin-right: 4px; }
+
+/* ==== 免责声明 ==== */
+.disclaimer {
+    background: #fff5e6; padding: 1rem 1.2rem;
+    border-left: 4px solid #f39c12; border-radius: 8px;
+    color: #6b4f00; font-size: 0.88rem; line-height: 1.6;
+}
+
+/* ==== 系统信息卡片(深色渐变) ==== */
+.sys-info {
+    background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
+    color: #ecf0f1; padding: 0.9rem 1.1rem;
+    border-radius: 10px; font-size: 0.86rem; line-height: 1.65;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+.sys-info .metric-line {
+    display: flex; justify-content: space-between;
+    padding: 5px 0; border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+.sys-info .metric-line:last-child { border-bottom: none; }
+.sys-info .metric-key { color: #bdc3c7; font-size: 0.83rem; }
+.sys-info .metric-val { color: #2ecc71; font-weight: 600; font-size: 0.85rem; }
+
+/* ==== 进度条颜色 ==== */
+.stProgress > div > div > div > div { background-color: #e74c3c; }
+
+/* ==== 风险刻度图例 ==== */
+.legend-box {
+    border-radius: 8px; padding: 8px 6px; text-align: center;
+    transition: all .2s ease;
+}
+.legend-box:hover { transform: translateY(-2px); }
+.legend-name { font-weight: 700; font-size: 0.9rem; }
+.legend-range { font-size: 0.78rem; color: #555; margin-top: 2px; }
+
+/* ==== 关键因素双向柱状图 ==== */
+.contrib-wrap {
+    background: #ffffff; border: 1px solid #ecf0f1;
+    border-radius: 12px; padding: 12px 18px; margin-top: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+}
+.contrib-row {
+    display: flex; align-items: center; gap: 14px;
+    padding: 10px 6px; border-bottom: 1px solid #f0f2f5;
+    transition: background .15s;
+}
+.contrib-row:hover { background: #fafbfc; border-radius: 6px; }
+.contrib-row:last-child { border-bottom: none; }
+
+.contrib-label { flex: 0 0 240px; min-width: 200px; }
+.contrib-feature-name { font-weight: 700; color: #2c3e50; font-size: 0.96rem; }
+.contrib-user-choice { font-size: 0.8rem; color: #7f8c8d; margin-top: 3px; }
+
+.contrib-imputed-tag {
+    display: inline-block;
+    background: #ffe6e6; color: #c0392b;
+    padding: 1px 7px; border-radius: 4px;
+    font-size: 0.7rem; font-weight: 700;
+    margin-left: 6px;
+}
+
+.contrib-bar-container {
+    flex: 1; display: flex; height: 28px; position: relative;
+    min-width: 200px;
+}
+.contrib-bar-half { width: 50%; display: flex; align-items: center; }
+.contrib-bar-half.left  { justify-content: flex-end; }
+.contrib-bar-half.right { justify-content: flex-start; }
+.contrib-bar-axis {
+    position: absolute; left: 50%; top: -2px; bottom: -2px;
+    width: 2px; background: #bdc3c7; border-radius: 1px;
+    transform: translateX(-50%); opacity: 0.6;
+    background-image: repeating-linear-gradient(0deg, #bdc3c7 0, #bdc3c7 4px, transparent 4px, transparent 7px);
+}
+.contrib-bar-fill {
+    height: 22px; transition: width .3s ease;
+}
+
+.contrib-value {
+    flex: 0 0 80px; text-align: center;
+    font-weight: 700; font-size: 1.02rem;
+    font-variant-numeric: tabular-nums;
+}
+
+/* ==== BMI 计算结果框 ==== */
+.bmi-result {
+    background: linear-gradient(135deg, #fff5f5 0%, #fff 100%);
+    border: 1px solid #fadbd8;
+    border-radius: 8px; padding: 0.7rem 1rem;
+    margin-top: 0.5rem;
+    font-size: 0.92rem; color: #2c3e50;
+}
+.bmi-result .bmi-num {
+    font-weight: 800; font-size: 1.15rem; color: #c0392b;
+}
+
+/* ==== 健康建议小行 ==== */
+.tip-line {
+    padding: 8px 4px;
+    border-bottom: 1px dashed #ecf0f1;
+}
+.tip-line:last-child { border-bottom: none; }
+
+/* ==== Tab 美化 ==== */
+.stTabs [data-baseweb="tab-list"] {
+    gap: 4px;
+}
+.stTabs [data-baseweb="tab"] {
+    border-radius: 8px 8px 0 0;
+    padding: 0.5rem 1rem;
+}
 </style>
 """, unsafe_allow_html=True)
 
+
 # ============================================================================
-# 1. 加载推理管道
+# 1. 加载推理管道(默认使用脚本所在目录,无需手动配置路径)
 # ============================================================================
+DEFAULT_ARTIFACTS_DIR = os.environ.get("ARTIFACTS_DIR") or str(Path(__file__).parent)
+
+
 @st.cache_resource(show_spinner="🔧 正在加载模型与预处理管道...")
 def load_pipeline(artifacts_dir: str) -> HeartRiskPipeline:
     return HeartRiskPipeline(artifacts_dir=artifacts_dir)
 
+
 # ============================================================================
-# 2. 侧边栏
+# 2. 工具函数
+# ============================================================================
+def _pct(x: float) -> str:
+    """阈值/概率统一显示为百分比。"""
+    return f"{x * 100:.1f}%"
+
+
+VALUE_LABEL_MAP = build_value_to_label_map()
+_ONEHOT_RE = re.compile(r'^(.+?)_(\d+\.\d+)$')
+
+
+def _parse_feature(feature: str):
+    """把 final_feature 名解析为 (原始字段, onehot值或None)。"""
+    m = _ONEHOT_RE.match(feature)
+    if m:
+        return m.group(1), float(m.group(2))
+    return feature, None
+
+
+def _get_user_choice_text(feature: str, raw_input: dict) -> tuple:
+    """
+    返回 (label_text, is_imputed)
+      label_text  : 该 feature 对应的"用户实际选择"文字
+      is_imputed  : 是否因不确定/拒绝回答而被系统推断
+    """
+    orig, _ = _parse_feature(feature)
+
+    # ---- BMI 特殊回显:展示用户实际计算出的 BMI 数值 ----
+    if orig == '_BMI5CAT' and '_bmi_value' in raw_input:
+        bmi = raw_input.get('_bmi_value', 0.0)
+        cat_val = raw_input.get('_BMI5CAT')
+        cat_name = VALUE_LABEL_MAP.get('_BMI5CAT', {}).get(cat_val, '')
+        cat_short = cat_name.split(' (')[0] if cat_name else ''
+        return f"BMI = {bmi:.1f} ({cat_short})", False
+
+    raw_val = raw_input.get(orig)
+    if raw_val is None:
+        return "系统推断", True
+
+    label = VALUE_LABEL_MAP.get(orig, {}).get(raw_val, str(raw_val))
+    # 简化:只保留中文部分,去掉英文括号注释,使展示更紧凑
+    short = re.split(r'\s*\(', label)[0].strip()
+    return short, False
+
+
+# ============================================================================
+# 3. 侧边栏 - 已删除"文件路径配置"部分,系统信息升级
 # ============================================================================
 with st.sidebar:
     st.markdown("## ❤️ 系统信息")
-    st.markdown("""
-    **模型**: LightGBM (经 Optuna 调优)
-    **AUC-ROC**: **0.8376**
-    **决策阈值**: 0.486
-    **训练数据**: BRFSS 2024 (45 万份问卷)
-    **特征数**: 48 个
-    """)
-
-    st.markdown("---")
-    st.markdown("## 📁 文件路径配置")
-    artifacts_dir = st.text_input(
-        "预处理产物 (.pkl) 所在目录",
-        value=os.environ.get("ARTIFACTS_DIR", "."),
-        help="该目录下需包含 model_LightGBM.pkl, scaler.pkl等文件。",
-    )
+    st.markdown(f"""
+    <div class="sys-info">
+      <div class="metric-line"><span class="metric-key">模型架构</span><span class="metric-val">LightGBM (GBDT)</span></div>
+      <div class="metric-line"><span class="metric-key">超参调优</span><span class="metric-val">Optuna · 100 trials</span></div>
+      <div class="metric-line"><span class="metric-key">类别不平衡</span><span class="metric-val">scale_pos_weight</span></div>
+      <div class="metric-line"><span class="metric-key">交叉验证</span><span class="metric-val">5-Fold Stratified</span></div>
+      <div class="metric-line"><span class="metric-key">测试集 AUC-ROC</span><span class="metric-val">0.8376</span></div>
+      <div class="metric-line"><span class="metric-key">最优决策阈值</span><span class="metric-val">{_pct(OPTIMAL_THRESHOLD)}</span></div>
+      <div class="metric-line"><span class="metric-key">高风险阈值</span><span class="metric-val">{_pct(HIGH_RISK_QUANTILE)}</span></div>
+      <div class="metric-line"><span class="metric-key">低风险阈值</span><span class="metric-val">{_pct(LOW_RISK_QUANTILE)}</span></div>
+      <div class="metric-line"><span class="metric-key">特征工程</span><span class="metric-val">35 → 48 维 (One-Hot)</span></div>
+      <div class="metric-line"><span class="metric-key">缺失值处理</span><span class="metric-val">MICE 迭代插补</span></div>
+      <div class="metric-line"><span class="metric-key">归一化策略</span><span class="metric-val">MinMax Scaler</span></div>
+      <div class="metric-line"><span class="metric-key">个体可解释性</span><span class="metric-val">SHAP TreeExplainer</span></div>
+      <div class="metric-line"><span class="metric-key">数据来源</span><span class="metric-val">CDC BRFSS 2024</span></div>
+      <div class="metric-line"><span class="metric-key">样本规模</span><span class="metric-val">~45 万份问卷</span></div>
+    </div>
+    """, unsafe_allow_html=True)
 
     st.markdown("---")
     st.markdown("## ⚠️ 免责声明")
     st.markdown("""
     <div class="disclaimer">
-    本系统是基于人群流行病学数据训练的 <b>风险预测辅助工具</b>，
+    本系统是基于人群流行病学数据训练的 <b>风险预测辅助工具</b>,
     <b>不构成任何形式的临床诊断、医疗建议或治疗依据</b>。<br><br>
     评估结果仅反映模型基于您所填问卷给出的统计学风险概率。<br><br>
-    若您出现胸痛、气促、持续乏力等症状，请立即就医。
+    若您出现胸痛、气促、持续乏力等症状,请立即就医。
     </div>
     """, unsafe_allow_html=True)
 
+
 # ============================================================================
-# 3. 主区域逻辑
+# 4. 主区域逻辑
 # ============================================================================
 st.markdown('<div class="main-title">❤️ 心脏病 (CHD/MI) 风险评估系统</div>', unsafe_allow_html=True)
-st.markdown('<div class="subtitle">基于 2024 BRFSS 数据 · 支持缺失值智能推断</div>', unsafe_allow_html=True)
+st.markdown(
+    '<div class="subtitle">基于 2024 BRFSS 数据 · LightGBM 模型 · SHAP 个体化解释 · 支持缺失值智能推断</div>',
+    unsafe_allow_html=True,
+)
 
 if "stage" not in st.session_state:
     st.session_state.stage = "form"
@@ -95,11 +293,61 @@ if "answers" not in st.session_state:
 if "assessment" not in st.session_state:
     st.session_state.assessment = None
 
+
 # ----------------------------------------------------------------------------
-# 3.A 问卷页 
+# 4.A 身高体重 → BMI 自动计算
+# ----------------------------------------------------------------------------
+def _render_bmi_input(answers: dict, key_prefix: str = "bmi") -> None:
+    """让用户输入身高体重,自动计算 BMI 并写入 _BMI5CAT。"""
+    h_col, w_col = st.columns(2)
+    h_default = float(answers.get('_height') or 170.0)
+    w_default = float(answers.get('_weight') or 65.0)
+
+    height = h_col.number_input(
+        "身高 (cm)",
+        min_value=80.0, max_value=250.0,
+        value=h_default, step=0.5,
+        key=f"{key_prefix}_h",
+    )
+    weight = w_col.number_input(
+        "体重 (kg)",
+        min_value=20.0, max_value=300.0,
+        value=w_default, step=0.5,
+        key=f"{key_prefix}_w",
+    )
+
+    bmi = weight / ((height / 100.0) ** 2) if height > 0 else 0.0
+    if bmi < 18.5:
+        cat, cat_name = 1, "体重不足"
+    elif bmi < 25:
+        cat, cat_name = 2, "正常体重"
+    elif bmi < 30:
+        cat, cat_name = 3, "超重"
+    else:
+        cat, cat_name = 4, "肥胖"
+
+    answers['_BMI5CAT'] = cat
+    answers['_height'] = height
+    answers['_weight'] = weight
+    answers['_bmi_value'] = bmi
+
+    st.markdown(
+        f'<div class="bmi-result">📊 系统自动计算: '
+        f'<span class="bmi-num">BMI = {bmi:.1f}</span> '
+        f'&nbsp;→&nbsp; 分类: <b>{cat_name}</b></div>',
+        unsafe_allow_html=True,
+    )
+
+
+# ----------------------------------------------------------------------------
+# 4.B 问卷页
 # ----------------------------------------------------------------------------
 def render_form() -> None:
-    st.markdown("请按实际情况完成问卷。标注 <span class='mandatory-star'>*</span> 的题目为必填；其余题目若不确定可保持默认选项，系统将自动进行推断。", unsafe_allow_html=True)
+    st.markdown(
+        "请按实际情况完成问卷。标注 <span class='mandatory-star'>*</span> 的题目为必填;"
+        "其余题目若不确定可选择 <b>「不确定 / 拒绝回答」</b>,系统将基于人群分布自动进行智能推断。",
+        unsafe_allow_html=True,
+    )
 
     section_names = list(QUESTIONS.keys())
     tabs = st.tabs(section_names)
@@ -109,16 +357,41 @@ def render_form() -> None:
         with tab:
             for q in QUESTIONS[sec_name]:
                 key = q["key"]
+                is_mandatory = key in MANDATORY_KEYS
+
+                # ---- 特殊处理 ①: BMI 改为身高体重输入 ----
+                if key == "_BMI5CAT":
+                    st.markdown(
+                        "<span class='mandatory-star'>*</span>"
+                        "<b>您的身高与体重</b> &nbsp;<i>(用于自动计算 BMI)</i>",
+                        unsafe_allow_html=True,
+                    )
+                    _render_bmi_input(answers)
+                    continue
+
+                # ---- 特殊处理 ②: 美国州改为下拉框 ----
+                if key == "_STATE":
+                    labels = [opt[0] for opt in q["options"]]
+                    values = [opt[1] for opt in q["options"]]
+                    if key in answers and answers[key] in values:
+                        default_idx = values.index(answers[key])
+                    else:
+                        default_idx = 0
+                    chosen_label = st.selectbox(
+                        label=f"\\* {q['label']}",
+                        options=labels,
+                        index=default_idx,
+                        key=f"q_{key}",
+                        help=q.get("help"),
+                    )
+                    answers[key] = values[labels.index(chosen_label)]
+                    continue
+
+                # ---- 普通 radio 问题 ----
                 labels = [opt[0] for opt in q["options"]]
                 values = [opt[1] for opt in q["options"]]
+                display_label = f"\\* {q['label']}" if is_mandatory else q['label']
 
-                # 必填项标识
-                is_mandatory = key in MANDATORY_KEYS
-                display_label = q["label"]
-                if is_mandatory:
-                    display_label = f"* {display_label}"
-
-                # 索引逻辑：必填项默认第一个，可选项默认最后一个(None)
                 if key in answers:
                     try:
                         default_idx = values.index(answers[key])
@@ -140,14 +413,15 @@ def render_form() -> None:
     st.session_state.answers = answers
     st.markdown("---")
     if st.button("🔍 开始评估风险", type="primary", use_container_width=True):
-        pipeline = load_pipeline(artifacts_dir)
+        pipeline = load_pipeline(DEFAULT_ARTIFACTS_DIR)
         with st.spinner("⏳ 模型正在评估中..."):
             st.session_state.assessment = pipeline.assess(answers, top_k=8)
             st.session_state.stage = "result"
             st.rerun()
 
+
 # ----------------------------------------------------------------------------
-# 3.B 结果页 
+# 4.C 结果页
 # ----------------------------------------------------------------------------
 def render_result() -> None:
     res: RiskAssessment = st.session_state.assessment
@@ -159,22 +433,32 @@ def render_result() -> None:
     left, right = st.columns([1, 2])
     with left:
         st.markdown(f"""
-            <div class="risk-card" style="background:{res.risk_color};">
+            <div class="risk-card" style="background:linear-gradient(135deg,{res.risk_color}dd,{res.risk_color});">
                 <p class="risk-prob">您的预测患病概率</p>
-                <p class="risk-level">{res.probability * 100:.1f}%</p>
+                <p class="risk-level">{_pct(res.probability)}</p>
                 <p class="risk-prob">风险等级: <b>{res.risk_level}</b></p>
             </div>
             """, unsafe_allow_html=True)
 
     with right:
-        st.markdown("#### 概率刻度尺")
+        st.markdown("#### 📍 概率刻度尺")
         st.progress(min(1.0, max(0.0, res.probability)))
-        st.caption(f"📍 阈值 = {OPTIMAL_THRESHOLD} | 低风险 ≤ {LOW_RISK_QUANTILE} | 高风险 ≥ {HIGH_RISK_QUANTILE}")
+        st.caption(
+            f"决策阈值 = **{_pct(OPTIMAL_THRESHOLD)}** &nbsp;|&nbsp; "
+            f"低风险 ≤ **{_pct(LOW_RISK_QUANTILE)}** &nbsp;|&nbsp; "
+            f"高风险 ≥ **{_pct(HIGH_RISK_QUANTILE)}**"
+        )
         _render_risk_legend(res.probability)
 
     st.markdown("---")
     st.markdown("### 🎯 影响您此次评估的关键因素")
-    _render_contributors(res.top_contributors)
+    st.caption(
+        "下图展示对您本次评估贡献最大的特征。"
+        "🔴 **红色(右侧)** 表示推高您的风险, "
+        "🟢 **绿色(左侧)** 表示降低您的风险, "
+        "数值为 SHAP 归因值(对数几率空间)。"
+    )
+    _render_contributors(res.top_contributors, res.raw_input)
 
     st.markdown("---")
     st.markdown("### 💡 基于评估结果的健康建议")
@@ -187,62 +471,149 @@ def render_result() -> None:
         st.rerun()
     if c2.button("🆕 重新开始评估", use_container_width=True):
         st.session_state.answers = {}
-        # 重置按钮保留底层清除逻辑，确保能回到初始状态
         for key in list(st.session_state.keys()):
-            if key.startswith("q_"):
+            if key.startswith("q_") or key.startswith("bmi_"):
                 del st.session_state[key]
         st.session_state.assessment = None
         st.session_state.stage = "form"
         st.rerun()
 
+
 # ============================================================================
-# 4. 辅助渲染函数 
+# 5. 辅助渲染函数
 # ============================================================================
 def _render_risk_legend(prob: float) -> None:
-    bands = [("低风险", 0.0, LOW_RISK_QUANTILE, '#2ca02c'), ("中风险", LOW_RISK_QUANTILE, OPTIMAL_THRESHOLD, '#f1c40f'), ("中-高风险", OPTIMAL_THRESHOLD, HIGH_RISK_QUANTILE, '#ff7f0e'), ("高风险", HIGH_RISK_QUANTILE, 1.0, '#d62728')]
+    bands = [
+        ("低风险", 0.0, LOW_RISK_QUANTILE, '#2ca02c'),
+        ("中风险", LOW_RISK_QUANTILE, OPTIMAL_THRESHOLD, '#f1c40f'),
+        ("中-高风险", OPTIMAL_THRESHOLD, HIGH_RISK_QUANTILE, '#ff7f0e'),
+        ("高风险", HIGH_RISK_QUANTILE, 1.0, '#d62728'),
+    ]
     cols = st.columns(len(bands))
     for col, (name, lo, hi, color) in zip(cols, bands):
         active = lo <= prob < hi or (hi == 1.0 and prob >= lo)
         border = '3px solid #2c3e50' if active else '1px solid #ddd'
-        col.markdown(f"<div style='border:{border}; border-radius:6px; padding:6px; text-align:center; background:{color}30;'><div style='color:{color}; font-weight:700;'>{name}</div><div style='font-size:0.8rem;'>{lo:.3f} – {hi:.3f}</div></div>", unsafe_allow_html=True)
+        col.markdown(
+            f"<div class='legend-box' style='border:{border}; background:{color}25;'>"
+            f"<div class='legend-name' style='color:{color};'>{name}</div>"
+            f"<div class='legend-range'>{_pct(lo)} – {_pct(hi)}</div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
 
-def _render_contributors(df: pd.DataFrame) -> None:
+
+def _render_contributors(df: pd.DataFrame, raw_input: dict) -> None:
+    """以双向居中柱状图样式展示 SHAP 贡献因子,并标注用户选项。"""
     if df is None or df.empty:
         st.info("当前模型不支持 SHAP 解释。")
         return
+
     max_abs = float(df['shap_value'].abs().max() or 1e-9)
+
+    has_imputed = False
+    rows_html = []
     for _, row in df.iterrows():
-        shap_val = float(row['shap_value'])
-        pct = abs(shap_val) / max_abs * 100
-        color, side, arrow = ('#d62728', 'left', '↑') if shap_val > 0 else ('#2ca02c', 'right', '↓')
-        bar_html = f"<div style='background:#f0f0f0; border-radius:4px; height:18px; position:relative; margin-top:4px;'><div style='background:{color}; width:{pct:.1f}%; height:100%; border-radius:4px; float:{side};'></div></div>"
-        c1, c2, c3 = st.columns([3, 5, 2])
-        c1.markdown(f"**{row['display_name']}**")
-        c2.markdown(bar_html, unsafe_allow_html=True)
-        c3.markdown(f"<span style='color:{color}; font-weight:600;'>{arrow} {abs(shap_val):.3f}</span>", unsafe_allow_html=True)
+        feature      = row['feature']
+        display_name = row['display_name']
+        shap_val     = float(row['shap_value'])
+        bar_pct      = abs(shap_val) / max_abs * 100  # 占半边的百分比
+
+        user_choice, is_imputed = _get_user_choice_text(feature, raw_input)
+        if is_imputed:
+            has_imputed = True
+
+        if shap_val > 0:
+            color = "#e74c3c"
+            sign = "+"
+            bar_left_html = ""
+            bar_right_html = (
+                f'<div class="contrib-bar-fill" '
+                f'style="width:{bar_pct:.1f}%; '
+                f'background:linear-gradient(90deg,{color}cc,{color}); '
+                f'border-radius:0 6px 6px 0; '
+                f'box-shadow:0 1px 3px rgba(231,76,60,0.3);"></div>'
+            )
+        else:
+            color = "#27ae60"
+            sign = "-"
+            bar_left_html = (
+                f'<div class="contrib-bar-fill" '
+                f'style="width:{bar_pct:.1f}%; '
+                f'background:linear-gradient(270deg,{color}cc,{color}); '
+                f'border-radius:6px 0 0 6px; '
+                f'box-shadow:0 1px 3px rgba(39,174,96,0.3);"></div>'
+            )
+            bar_right_html = ""
+
+        imputed_tag = (
+            '<span class="contrib-imputed-tag">⚠ 系统推断</span>' if is_imputed else ''
+        )
+
+        rows_html.append(f"""
+        <div class="contrib-row">
+          <div class="contrib-label">
+            <div class="contrib-feature-name">{display_name}</div>
+            <div class="contrib-user-choice">您的选择: {user_choice}{imputed_tag}</div>
+          </div>
+          <div class="contrib-bar-container">
+            <div class="contrib-bar-half left">{bar_left_html}</div>
+            <div class="contrib-bar-axis"></div>
+            <div class="contrib-bar-half right">{bar_right_html}</div>
+          </div>
+          <div class="contrib-value" style="color:{color};">{sign}{abs(shap_val):.3f}</div>
+        </div>
+        """)
+
+    st.markdown(
+        f'<div class="contrib-wrap">{"".join(rows_html)}</div>',
+        unsafe_allow_html=True,
+    )
+
+    if has_imputed:
+        st.info(
+            "ℹ️ 标有 **⚠ 系统推断** 的因素是因您选择了「不确定 / 拒绝回答」"
+            "而由模型基于人群分布自动推断的结果。 "
+            "如希望提高评估精度,建议返回问卷补全这些题目。"
+        )
+
 
 def _render_recommendations(res: RiskAssessment) -> None:
     answers = res.raw_input
     tips = []
-    
-    if answers.get('_SMOKER3') in (1, 2): tips.append("🚭 **戒烟**:吸烟是冠心病最可干预的强风险因素。")
-    if answers.get('_RFBING6') == 2: tips.append("🍷 **限酒**:避免短时间内大量饮酒。")
-    if answers.get('EXERANY2') == 2: tips.append("🏃 **规律运动**:每周累计 ≥150 分钟中等强度有氧运动。")
-    if answers.get('_BMI5CAT') in (3, 4): tips.append("⚖️ **控制体重**:建议结合饮食与运动减重 5-10%。")
-    if answers.get('DIABETE4') == 1: tips.append("🩸 **管好血糖**:糖尿病显著加速冠脉硬化。目标通常 <7%。")
-    if answers.get('CVDSTRK3') == 1: tips.append("⚠️ **二级预防**:既往中风者属心血管病高危人群。")
-    if answers.get('_RFHLTH') == 2: tips.append("🌿 **改善健康**:建议做一次全面体检。")
-    if answers.get('_PHYS14D') == 3 or answers.get('_MENT14D') == 3: tips.append("🧠 **关注身心**:关注长期身体或情绪不佳。")
-    if answers.get('PNEUVAC4') == 2 and (answers.get('_AGE_G') or 0) >= 5: tips.append("💉 **肺炎疫苗**:65+ 老人接种可降低心血管事件风险。")
-    tips.append("🥗 **健康饮食**:多蔬菜水果、全谷物，少加工肉。")
 
-    if res.risk_level in ("高风险", "中-高风险"): st.warning("⚠️ 强烈建议尽快前往心内科检查。")
-    elif res.risk_level == "中风险": st.info("ℹ️ 建议每年做一次心血管健康体检。")
-    else: st.success("✅ 继续保持健康生活方式。")
-    for tip in tips: st.markdown(f"- {tip}")
+    if answers.get('_SMOKER3') in (1, 2):
+        tips.append("🚭 **戒烟**:吸烟是冠心病最可干预的强风险因素。")
+    if answers.get('_RFBING6') == 2:
+        tips.append("🍷 **限酒**:避免短时间内大量饮酒。")
+    if answers.get('EXERANY2') == 2:
+        tips.append("🏃 **规律运动**:每周累计 ≥150 分钟中等强度有氧运动。")
+    if answers.get('_BMI5CAT') in (3, 4):
+        tips.append("⚖️ **控制体重**:建议结合饮食与运动减重 5-10%。")
+    if answers.get('DIABETE4') == 1:
+        tips.append("🩸 **管好血糖**:糖尿病显著加速冠脉硬化。目标通常 <7%。")
+    if answers.get('CVDSTRK3') == 1:
+        tips.append("⚠️ **二级预防**:既往中风者属心血管病高危人群。")
+    if answers.get('_RFHLTH') == 2:
+        tips.append("🌿 **改善健康**:建议做一次全面体检。")
+    if answers.get('_PHYS14D') == 3 or answers.get('_MENT14D') == 3:
+        tips.append("🧠 **关注身心**:关注长期身体或情绪不佳。")
+    if answers.get('PNEUVAC4') == 2 and (answers.get('_AGE_G') or 0) >= 5:
+        tips.append("💉 **肺炎疫苗**:65+ 老人接种可降低心血管事件风险。")
+    tips.append("🥗 **健康饮食**:多蔬菜水果、全谷物,少加工肉。")
+
+    if res.risk_level in ("高风险", "中-高风险"):
+        st.warning("⚠️ 强烈建议尽快前往心内科检查。")
+    elif res.risk_level == "中风险":
+        st.info("ℹ️ 建议每年做一次心血管健康体检。")
+    else:
+        st.success("✅ 继续保持健康生活方式。")
+
+    for tip in tips:
+        st.markdown(f"<div class='tip-line'>{tip}</div>", unsafe_allow_html=True)
+
 
 # ============================================================================
-# 5. 主路由
+# 6. 主路由
 # ============================================================================
 if st.session_state.stage == "form":
     render_form()
