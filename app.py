@@ -549,20 +549,22 @@ def _render_contributors(df: pd.DataFrame, raw_input: dict) -> None:
             '<span class="contrib-imputed-tag">⚠ 系统推断</span>' if is_imputed else ''
         )
 
-        rows_html.append(f"""
-        <div class="contrib-row">
-          <div class="contrib-label">
-            <div class="contrib-feature-name">{display_name}</div>
-            <div class="contrib-user-choice">您的选择: {user_choice}{imputed_tag}</div>
-          </div>
-          <div class="contrib-bar-container">
-            <div class="contrib-bar-half left">{bar_left_html}</div>
-            <div class="contrib-bar-axis"></div>
-            <div class="contrib-bar-half right">{bar_right_html}</div>
-          </div>
-          <div class="contrib-value" style="color:{color};">{sign}{abs(shap_val):.3f}</div>
-        </div>
-        """)
+        # 注意:此处 HTML 必须无前导空格,否则 Streamlit 的 Markdown 解析器
+        # 会把"4 空格开头的行"识别为 indented code block,直接把源码渲染出来。
+        rows_html.append(
+            f'<div class="contrib-row">'
+            f'<div class="contrib-label">'
+            f'<div class="contrib-feature-name">{display_name}</div>'
+            f'<div class="contrib-user-choice">您的选择: {user_choice}{imputed_tag}</div>'
+            f'</div>'
+            f'<div class="contrib-bar-container">'
+            f'<div class="contrib-bar-half left">{bar_left_html}</div>'
+            f'<div class="contrib-bar-axis"></div>'
+            f'<div class="contrib-bar-half right">{bar_right_html}</div>'
+            f'</div>'
+            f'<div class="contrib-value" style="color:{color};">{sign}{abs(shap_val):.3f}</div>'
+            f'</div>'
+        )
 
     st.markdown(
         f'<div class="contrib-wrap">{"".join(rows_html)}</div>',
