@@ -153,6 +153,22 @@ st.markdown("""
     font-variant-numeric: tabular-nums;
 }
 
+/* ==== 系统推断清单 (新增) ==== */
+.imputed-list-wrap {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 12px; margin-top: 10px;
+}
+.imputed-card {
+    background: #fff5f5; border: 1px dashed #fadbd8;
+    border-radius: 10px; padding: 14px 16px;
+    display: flex; flex-direction: column; justify-content: center;
+    transition: transform 0.2s;
+}
+.imputed-card:hover { transform: translateY(-2px); border-style: solid; }
+.imputed-card .q-title { font-size: 0.82rem; color: #7f8c8d; margin-bottom: 5px; font-weight: 500; }
+.imputed-card .a-val { font-size: 1.02rem; font-weight: 700; color: #c0392b; }
+
 /* ==== BMI 计算结果框 ==== */
 .bmi-result {
     background: linear-gradient(135deg, #fff5f5 0%, #fff 100%);
@@ -474,6 +490,9 @@ def render_result() -> None:
     )
     _render_contributors(res.top_contributors, res.raw_input, res.imputed_values)
 
+    # ---- 新增部分: 无论是否出现在关键因素中,展示所有推断出的具体选择 ----
+    _render_imputed_details(res)
+
     st.markdown("---")
     st.markdown("### 💡 基于评估结果的健康建议")
     _render_recommendations(res)
@@ -591,8 +610,46 @@ def _render_contributors(df: pd.DataFrame,
         st.info(
             "ℹ️ 标有 **⚠ 系统推断** 的选项是因您填写了「不确定 / 拒绝回答」而由模型"
             "自动推断出的取值,并非您的真实作答。 "
-            "如希望提高评估精度,建议返回问卷补全这些题目。"
+            "详细推断结果见下方列表。"
         )
+
+
+def _render_imputed_details(res: RiskAssessment) -> None:
+    """展示因不确定/拒绝回答而由系统自动推断的所有字段明细。"""
+    if not res.imputed_values:
+        return
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("### 🤖 系统智能推断清单")
+    st.caption("以下为您在问卷中选择「不确定/拒绝回答」的题目，系统基于大样本统计规律推断出的最可能取值：")
+
+    # 建立 Key -> 题干文本的映射
+    key_to_label = {}
+    for sec in QUESTIONS.values():
+        for q in sec:
+            key_to_label[q['key']] = q['label']
+
+    cards_html = []
+    for key, val in res.imputed_values.items():
+        q_text = key_to_label.get(key, key)
+        
+        # 转换并查表映射出推断的中文标签
+        val_int = int(round(float(val)))
+        raw_label = VALUE_LABEL_MAP.get(key, {}).get(val_int, f"推断值={val:g}")
+        # 去除括号说明
+        clean_label = re.split(r'\s*\(', raw_label)[0].strip()
+
+        cards_html.append(
+            f'<div class="imputed-card">'
+            f'<div class="q-title">{q_text}</div>'
+            f'<div class="a-val">{clean_label}</div>'
+            f'</div>'
+        )
+
+    st.markdown(
+        f'<div class="imputed-list-wrap">{"".join(cards_html)}</div>',
+        unsafe_allow_html=True
+    )
 
 
 def _render_recommendations(res: RiskAssessment) -> None:
